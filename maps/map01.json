@@ -1,0 +1,38 @@
+{
+  "name": "经典对称 01",
+  "size": 26,
+  "terrain": [
+    "..........................",
+    "..........................",
+    "..BBBB..BB..BB..BB..BBBB..",
+    "..BBBB..BB..BB..BB..BBBB..",
+    "..BB........SS........BB..",
+    "..BB........SS........BB..",
+    "......BBBB......BBBB......",
+    "......BBBB......BBBB......",
+    "BB..WW....BBBBBB....WW..BB",
+    "BB..WW....BBBBBB....WW..BB",
+    "....WW..BBBBTTBBBB..WW....",
+    "....WW..BBBBTTBBBB..WW....",
+    "..BB..BBBBTTTTTTBBBB..BB..",
+    "..BB..BBBBTTTTTTBBBB..BB..",
+    "........BBBBTTBBBB........",
+    "........BBBBTTBBBB........",
+    "BB..WW....BBBBBB....WW..BB",
+    "BB..WW....BBBBBB....WW..BB",
+    "......BBBB......BBBB......",
+    "......BBBB......BBBB......",
+    "..BB..................BB..",
+    "..BB..................BB..",
+    "..BBBB..BB..II..BB..BBBB..",
+    "..BBBB..BB..II..BB..BBBB..",
+    "..........................",
+    ".........................."
+  ],
+  "spawns": [
+    { "x": 4, "y": 24 },
+    { "x": 20, "y": 0 }
+  ],
+  "base": null,
+  "powerupSpots": []
+}

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TanKing — M1 单机核心</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a1a1a; color: #ddd;
+      font-family: 'Courier New', monospace;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    }
+    #app { display: flex; gap: 16px; align-items: stretch; }
+    #stage { position: relative; }
+    canvas {
+      display: block;
+      width: min(88vmin, 832px);
+      aspect-ratio: 1;
+      image-rendering: pixelated;
+      background: #000;
+      border: 4px solid #636363;
+    }
+    #overlay {
+      position: absolute; inset: 0;
+      display: none; flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(0, 0, 0, 0.75); text-align: center; gap: 12px;
+    }
+    #overlay.show { display: flex; }
+    #overlay h1 { color: #e8c838; font-size: 28px; letter-spacing: 2px; }
+    #overlay p { color: #aaa; }
+    #hud {
+      width: 240px; display: flex; flex-direction: column; gap: 12px;
+      font-size: 13px;
+    }
+    #hud h2 { font-size: 16px; color: #e8c838; border-bottom: 1px solid #444; padding-bottom: 4px; }
+    .score-row { display: flex; justify-content: space-between; padding: 4px 6px; background: #262626; }
+    .score-row .name { font-weight: bold; }
+    .score-row .meta { color: #999; }
+    #feed { list-style: none; display: flex; flex-direction: column; gap: 2px; min-height: 80px; }
+    #feed li { color: #c96; font-size: 12px; }
+    #help { color: #666; font-size: 12px; line-height: 1.7; margin-top: auto; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="stage">
+      <canvas id="game" width="416" height="416"></canvas>
+      <div id="overlay"><h1 id="overlay-title"></h1><p id="overlay-text"></p></div>
+    </div>
+    <div id="hud">
+      <h2>TanKing · 死亡竞技</h2>
+      <div id="scores"></div>
+      <h2>击杀播报</h2>
+      <ul id="feed"></ul>
+      <div id="help">
+        操作：方向键 / WASD 移动，空格 / J 射击<br />
+        R 重新开始 · 先达 1000 分获胜
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/client/main.ts"></script>
+</body>
+</html>
