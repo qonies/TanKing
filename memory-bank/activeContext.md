@@ -1,7 +1,7 @@
 # 当前工作上下文（Active Context）
 
 ## 当前阶段
-**M1 收尾 / 仓库发布（2026-10-19）**：M1 完成（29/29 测试通过）。已完成文档一致性修订、README 与 MIT LICENSE、git 初始化与首次提交。
+**M1 完成 + 审查修复（2026-10-19）**：M1 完成（32/32 测试通过）。已完成文档一致性修订、README 与 MIT LICENSE、git 初始化与首次提交、发布 GitHub，并完成一轮文档/代码交叉审查修复。
 
 ## 已确认的关键决策
 1. 核心玩法：**PvP 死亡竞技**（用户选定）。
@@ -24,6 +24,14 @@
   - `tests/`：29 个用例全绿（移动吸附/碰撞/冰面/砖钢水树/子弹互消/计分/护盾/胜负/BOT 行为/可复现性）
   - `docs/参数对照表.md` 已建立（M1 近似项已标注，M3 需逐帧精调）
 - [x] **M1 收尾与发布准备**（2026-10-19）：文档一致性修订（状态行/冰面滑行/协议措辞）、SCORE_CAP_DEFAULT 统一引用、魔数改常量（CELL/TANK_SIZE）、修正砖墙条带测试恒真断言、新增 README.md 与 MIT LICENSE、git init + 首次提交（仓库级中性提交身份防隐私泄露）
+- [x] **发布到 GitHub**（2026-10-19）：`gh repo create TanKing --public` 创建公开仓库 https://github.com/qonies/TanKing 并推送 main（c2c1acd）。注意事项：① 直接 `git push` 会超时（网络慢），需后台进程推送；② HOME 环境变量异常指向 /home/tony 导致 `gh auth setup-git` 失败，已改用**仓库级** `credential.helper "!gh auth git-credential"` 解决。
+- [x] **审查修复**（2026-10-19）：文档↔代码交叉审查发现 4 项问题并修复：
+  1. **默认 8 分钟限时未生效**：`main.ts` 现传入 `timeTicks: ROUND_TICKS_DEFAULT`；index.html 帮助文案同步（PRD D1 承诺的 1000 分/8 分钟）。
+  2. **击杀记账去除 id==下标隐式依赖**：`BattleSim` 新增私有 `tankById()`，`killTank` 与 `main.ts` 事件处理均按 id 查找（M2 房间玩家进出安全）。「子弹存活于射手死亡后」已作为明确设计决策记入参数对照表 §3 第 6 条（原版行为 M3 核定）。
+  3. **子弹互消改标记式**：旧代码边遍历边 splice，三弹同 tick 重叠时漏判；现用 dead Set 标记后统一过滤，一弹与多弹重叠全部抵消。
+  4. **`findSpawn` 兜底防重叠**：200 次随机尝试全败后增加全场顺序扫描（确定性、不消耗 PRNG），保证重生点不与其他坦克重叠。
+  另：爆炸事件残留魔数 `+4` 改 `BULLET_SIZE/2`；README/PRD 状态行「M2 开发中」改「待启动」；techContext dev 脚本标注 M2 目标。新增 3 个回归测试（三弹互消/死者子弹仍命中记账/重生不重叠），32/32 全绿。
+  - **遗留未修**：测试文档覆盖率目标未落地（需 @vitest/coverage-v8 + coverage 配置）；地图 loader 未校验 spawns 越界/`def.size` 一致性；HUD innerHTML 拼名字的 XSS 隐患（M2 接入网络昵称前必须改 textContent）。
 - [ ] **M2 联机打通**（下一里程碑，等待用户指令）
 
 ## M1 实现要点（后续开发需遵守）

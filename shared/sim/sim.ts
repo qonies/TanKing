@@ -239,6 +239,14 @@ export class BattleSim {
       const y = Math.floor(this.rng() * (GRID - 1)) * CELL;
       if (this.canOccupy(t, x, y)) return { x, y };
     }
+    // 最终兜底：全场顺序扫描，保证重生点不与其他坦克重叠（确定性，不消耗 PRNG）
+    for (let cy = 0; cy <= GRID - 2; cy++) {
+      for (let cx = 0; cx <= GRID - 2; cx++) {
+        const px = cx * CELL;
+        const py = cy * CELL;
+        if (this.canOccupy(t, px, py)) return { x: px, y: py };
+      }
+    }
     return own;
   }
 
@@ -266,7 +274,7 @@ export class BattleSim {
 
       // 出界
       if (b.x <= -BULLET_SIZE || b.y <= -BULLET_SIZE || b.x >= FIELD || b.y >= FIELD) {
-        this.events.push({ type: 'explosion', x: clamp(b.x + 4, 0, FIELD), y: clamp(b.y + 4, 0, FIELD), big: false });
+        this.events.push({ type: 'explosion', x: clamp(b.x + BULLET_SIZE / 2, 0, FIELD), y: clamp(b.y + BULLET_SIZE / 2, 0, FIELD), big: false });
         continue;
       }
       if (this.bulletVsTerrain(b)) continue;
@@ -274,24 +282,23 @@ export class BattleSim {
       alive.push(b);
     }
 
-    // 子弹互消（FR-T2，含擦边）
-    const keep: Bullet[] = [];
+    // 子弹互消（FR-T2，含擦边；标记式：同 tick 内一弹与多弹重叠时全部抵消）
+    const dead = new Set<number>();
     for (let i = 0; i < alive.length; i++) {
-      let cancelled = false;
+      if (dead.has(i)) continue;
+      const a = alive[i]!;
       for (let j = i + 1; j < alive.length; j++) {
-        const a = alive[i]!;
+        if (dead.has(j)) continue;
         const c = alive[j]!;
         if (a.x <= c.x + BULLET_SIZE && a.x + BULLET_SIZE >= c.x &&
             a.y <= c.y + BULLET_SIZE && a.y + BULLET_SIZE >= c.y) {
-          this.events.push({ type: 'explosion', x: (a.x + c.x) / 2 + 4, y: (a.y + c.y) / 2 + 4, big: false });
-          alive.splice(j, 1);
-          cancelled = true;
-          break;
+          dead.add(i);
+          dead.add(j);
+          this.events.push({ type: 'explosion', x: (a.x + c.x) / 2 + BULLET_SIZE / 2, y: (a.y + c.y) / 2 + BULLET_SIZE / 2, big: false });
         }
       }
-      if (!cancelled) keep.push(alive[i]!);
     }
-    this.bullets = keep;
+    this.bullets = alive.filter((_, idx) => !dead.has(idx));
   }
 
   /** 子弹 vs 地形：砖按小格损毁（32px 宽条带，近似原版 2 小格宽），钢挡弹 */
@@ -344,6 +351,11 @@ export class BattleSim {
     return false;
   }
 
+  /** 按 id 查找坦克（不依赖 id === 数组下标的隐式约定，M2 房间玩家进出时安全） */
+  private tankById(id: number): Tank | undefined {
+    return this.tanks.find((t) => t.id === id);
+  }
+
   private killTank(victim: Tank, killerId: number): void {
     victim.alive = false;
     victim.moving = false;
@@ -351,7 +363,7 @@ export class BattleSim {
     victim.respawnTicks = RESPAWN_TICKS;
     victim.deaths++;
 
-    const killer = this.tanks[killerId];
+    const killer = this.tankById(killerId);
     if (killer) {
       killer.score += SCORE_KILL;
       killer.kills++;

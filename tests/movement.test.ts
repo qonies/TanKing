@@ -12,7 +12,7 @@ import {
   TANK_SPEED,
 } from '../shared/constants';
 import { TerrainType } from '../shared/types';
-import { EMPTY_ROW, makeSim } from './helpers';
+import { EMPTY_ROW, makeSim, TWO_SPAWNS } from './helpers';
 
 describe('坦克移动与半格吸附（FR-T1）', () => {
   it('按住方向键持续移动', () => {
@@ -104,6 +104,25 @@ describe('坦克碰撞（FR-M1/M2/M3、坦克互为障碍）', () => {
     sim.setInput(0, 0);
     sim.step(); // 松开吸附
     expect(a.y).toBe(13 * CELL - TANK_SIZE);
+  });
+
+  it('重生点不会与其他坦克重叠', () => {
+    const sim = makeSim([], TWO_SPAWNS, [{ name: 'A' }, { name: 'B' }, { name: 'C' }]);
+    const a = sim.tanks[0]!;
+    const b = sim.tanks[1]!;
+    const c = sim.tanks[2]!;
+    // 初始布局：tank1 → spawn1，tank2 → spawn0，两个出生点都被占住
+    expect(b.x).toBe(TWO_SPAWNS[1]!.x * CELL);
+    expect(c.x).toBe(TWO_SPAWNS[0]!.x * CELL);
+    a.alive = false;
+    a.respawnTicks = 1;
+    sim.step(); // 触发 A 重生（出生点被占 → 走随机/兜底搜索）
+    expect(a.alive).toBe(true);
+    for (const o of [b, c]) {
+      const overlap = a.x < o.x + TANK_SIZE && a.x + TANK_SIZE > o.x &&
+                      a.y < o.y + TANK_SIZE && a.y + TANK_SIZE > o.y;
+      expect(overlap).toBe(false);
+    }
   });
 });
 

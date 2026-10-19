@@ -133,6 +133,37 @@ describe('子弹互消与击杀计分（FR-T2、D1）', () => {
     for (let i = 0; i < 10; i++) sim.step();
     expect(sim.bullets.filter((b) => b.ownerId === 0).length).toBe(1);
   });
+
+  it('三弹同 tick 重叠时全部抵消', () => {
+    const sim = makeSim();
+    // 直接布置三发子弹，移动 4px 后两两重叠（空地，避开坦克与地形）
+    sim.bullets.push(
+      { id: 1, ownerId: 0, dir: Dir.Up, x: 224, y: 68 },
+      { id: 2, ownerId: 1, dir: Dir.Down, x: 224, y: 56 },
+      { id: 3, ownerId: 0, dir: Dir.Left, x: 236, y: 64 },
+    );
+    sim.step();
+    expect(sim.bullets.length).toBe(0);
+  });
+
+  it('射手死亡后其飞行中的子弹仍可命中并正确记账', () => {
+    const sim = makeSim();
+    const a = sim.tanks[0]!;
+    const b = sim.tanks[1]!;
+    a.shieldTicks = 0;
+    b.shieldTicks = 0;
+    a.x = 4 * CELL; a.y = 20 * CELL; a.dir = Dir.Up;
+    b.x = 4 * CELL; b.y = 12 * CELL; b.dir = Dir.Down;
+    sim.setInput(0, INPUT_UP | INPUT_FIRE);
+    sim.step(); // A 开炮
+    sim.setInput(0, 0);
+    a.alive = false;            // 模拟 A 随后被第三方击毁
+    a.respawnTicks = RESPAWN_TICKS;
+    for (let i = 0; i < 100 && sim.bullets.length > 0; i++) sim.step();
+    expect(b.alive).toBe(false);
+    expect(a.score).toBe(SCORE_KILL); // 击杀记账按 id 查找，不依赖数组下标
+    expect(a.kills).toBe(1);
+  });
 });
 
 describe('回合胜负（D1：积分制）', () => {

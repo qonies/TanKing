@@ -1,4 +1,4 @@
-import { SCORE_CAP_DEFAULT, TICK_MS } from '../shared/constants';
+import { ROUND_TICKS_DEFAULT, SCORE_CAP_DEFAULT, TICK_MS } from '../shared/constants';
 import type { MapDef } from '../shared/types';
 import { BattleSim } from '../shared/sim/sim';
 import { BotController } from '../shared/sim/bot';
@@ -32,7 +32,7 @@ function start(): void {
   sim = new BattleSim(mapDef, [
     { name: '玩家', isBot: false, color: '#e8c838' },
     { name: 'Bot-1', isBot: true, color: '#d84040' },
-  ], { seed: SEED, scoreCap: SCORE_CAP_DEFAULT });
+  ], { seed: SEED, scoreCap: SCORE_CAP_DEFAULT, timeTicks: ROUND_TICKS_DEFAULT });
   bot = new BotController(sim, 1, mulberry32(99), 'normal');
   renderer = new Renderer(ctx);
   feed = [];
@@ -56,8 +56,8 @@ function handleEvents(): void {
   for (const e of sim.drainEvents()) {
     renderer.pushEvent(e);
     if (e.type === 'kill') {
-      const killer = sim.tanks[e.killerId];
-      const victim = sim.tanks[e.victimId];
+      const killer = sim.tanks.find((t) => t.id === e.killerId);
+      const victim = sim.tanks.find((t) => t.id === e.victimId);
       feed.push({
         text: `${killer?.name ?? '?'} 击毁了 ${victim?.name ?? '?'}`,
         until: sim.tick + FEED_TICKS,
