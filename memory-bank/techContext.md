@@ -16,8 +16,8 @@
 
 ## 开发环境（Windows）
 - Node.js ≥ 20, npm
-- `npm run dev`：Vite 开发服务器（M2 起与 Node 游戏服务器并行，concurrently —— 当前仅 Vite）
-- `npm run build` + `npm start`：生产模式，单端口托管
+- `npm run dev`：concurrently 并行启动 Vite(5173，代理 /ws→3000) + tsx watch 游戏服务器(3000)（M2 起已实现）
+- `npm run build` + `npm start`：生产模式，单端口 3000 托管（服务器读 `dist/`）
 - 浏览器目标：Chrome / Edge / Firefox 最新两个大版本
 
 ## 技术约束

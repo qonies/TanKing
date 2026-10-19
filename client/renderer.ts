@@ -7,9 +7,25 @@ import {
   TANK_SIZE,
 } from '../shared/constants';
 import { TerrainType, type SimEvent } from '../shared/types';
-import type { BattleSim } from '../shared/sim/sim';
 
 interface Fx { x: number; y: number; big: boolean; t: number }
+
+/** 渲染视图抽象：单机模式直接传 BattleSim（结构兼容），联机模式传插值快照视图 */
+export interface RenderTank {
+  x: number;
+  y: number;
+  dir: Dir;
+  alive: boolean;
+  shieldTicks: number;
+  color: string;
+}
+
+export interface RenderView {
+  tick: number;
+  bullets: readonly { x: number; y: number }[];
+  tanks: readonly RenderTank[];
+  terrainAt(cx: number, cy: number): TerrainType;
+}
 
 const COLORS: Record<TerrainType, string> = {
   [TerrainType.Empty]: '#000000',
@@ -34,7 +50,7 @@ export class Renderer {
     this.fx.length = 0;
   }
 
-  render(sim: BattleSim): void {
+  render(view: RenderView): void {
     const ctx = this.ctx;
     ctx.imageSmoothingEnabled = false;
 
@@ -45,7 +61,7 @@ export class Renderer {
     // 2. 冰面 / 水面（坦克层之下）
     for (let cy = 0; cy < GRID; cy++) {
       for (let cx = 0; cx < GRID; cx++) {
-        const tt = sim.terrainAt(cx, cy);
+        const tt = view.terrainAt(cx, cy);
         if (tt === TerrainType.Ice) {
           ctx.fillStyle = COLORS[TerrainType.Ice];
           ctx.fillRect(cx * CELL, cy * CELL, CELL, CELL);
@@ -60,20 +76,20 @@ export class Renderer {
     }
 
     // 3. 子弹 → 坦克（含护盾）
-    for (const b of sim.bullets) {
+    for (const b of view.bullets) {
       ctx.fillStyle = '#f8f8f8';
       ctx.fillRect(Math.round(b.x), Math.round(b.y), BULLET_SIZE, BULLET_SIZE);
     }
-    for (const t of sim.tanks) {
+    for (const t of view.tanks) {
       if (!t.alive) continue;
       this.drawTank(t.x, t.y, t.dir, t.color);
-      if (t.shieldTicks > 0) this.drawShield(t.x, t.y, sim.tick % 8 < 4);
+      if (t.shieldTicks > 0) this.drawShield(t.x, t.y, view.tick % 8 < 4);
     }
 
     // 4. 砖 / 钢（坦克层之上）
     for (let cy = 0; cy < GRID; cy++) {
       for (let cx = 0; cx < GRID; cx++) {
-        const tt = sim.terrainAt(cx, cy);
+        const tt = view.terrainAt(cx, cy);
         if (tt === TerrainType.Brick) {
           ctx.fillStyle = COLORS[TerrainType.Brick];
           ctx.fillRect(cx * CELL, cy * CELL, CELL, CELL);
@@ -94,7 +110,7 @@ export class Renderer {
     // 5. 树林（最上层遮挡，FR-M4）
     for (let cy = 0; cy < GRID; cy++) {
       for (let cx = 0; cx < GRID; cx++) {
-        if (sim.terrainAt(cx, cy) === TerrainType.Trees) {
+        if (view.terrainAt(cx, cy) === TerrainType.Trees) {
           ctx.fillStyle = COLORS[TerrainType.Trees];
           ctx.fillRect(cx * CELL, cy * CELL, CELL, CELL);
           ctx.fillStyle = '#0c9c0c';

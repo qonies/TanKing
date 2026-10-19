@@ -1,7 +1,7 @@
 # 当前工作上下文（Active Context）
 
 ## 当前阶段
-**M1 完成 + 审查修复（2026-10-19）**：M1 完成（32/32 测试通过）。已完成文档一致性修订、README 与 MIT LICENSE、git 初始化与首次提交、发布 GitHub，并完成一轮文档/代码交叉审查修复。
+**M2 联机打通完成（2026-10-19）**：41/41 测试通过。M1（单机核心）与 M2（WebSocket 服务器 / 房间状态机 / 快照同步 / AI 补位）完成。下一步 M3 内容完整。
 
 ## 已确认的关键决策
 1. 核心玩法：**PvP 死亡竞技**（用户选定）。
@@ -32,7 +32,18 @@
   4. **`findSpawn` 兜底防重叠**：200 次随机尝试全败后增加全场顺序扫描（确定性、不消耗 PRNG），保证重生点不与其他坦克重叠。
   另：爆炸事件残留魔数 `+4` 改 `BULLET_SIZE/2`；README/PRD 状态行「M2 开发中」改「待启动」；techContext dev 脚本标注 M2 目标。新增 3 个回归测试（三弹互消/死者子弹仍命中记账/重生不重叠），32/32 全绿。
   - **遗留未修**：测试文档覆盖率目标未落地（需 @vitest/coverage-v8 + coverage 配置）；地图 loader 未校验 spawns 越界/`def.size` 一致性；HUD innerHTML 拼名字的 XSS 隐患（M2 接入网络昵称前必须改 textContent）。
-- [ ] **M2 联机打通**（下一里程碑，等待用户指令）
+- [x] **M2 联机打通**（2026-10-19，当前阶段）：
+  - 依赖：`ws` + devDeps `@types/ws` `@types/node` `tsx` `concurrently`；version 0.2.0
+  - `shared/protocol.ts`：C2S（join/input/start）/ S2C（welcome/lobbyState/snapshot/event/error）消息类型
+  - `server/room.ts`：Room 状态机 Waiting→Countdown(3s)→Playing→RoundEnd(5s)→Waiting；**Conn 抽象可注入**（测试无需真实 socket）；房主 = 最小 connId；真人优先 AI 补位（maxTanks 默认 2）；昵称 trim/≤12 字符/满员拒收
+  - `server/gameLoop.ts`：setTimeout(1) 忙等 + 累积器 + 250ms 追帧上限；`server/index.ts`：HTTP 静态托管 dist + `ws` 同端口 `/ws`，坏 JSON 忽略
+  - `client/net.ts`（NetClient）+ `client/interp.ts`（SnapshotBuffer 最新 tick−2 双帧插值，瞬移 >64px 不插值；TerrainView 应用 brickBreak 事件）
+  - `client/main.ts` 重构：菜单（单机/联机）→ 大厅（成员/房主开始按钮）→ 倒计时 → 对局（输入变化时发送 + 15 tick 心跳）→ 结算回房间；renderer 改为 RenderView 抽象（单机传 sim、联机传插值视图）；昵称渲染全部 textContent（XSS 隐患已消除）
+  - vite dev 代理 `/ws` → ws://localhost:3000；tsconfig include server + node types
+  - 测试：tests/server.test.ts 9 个 L2 集成用例（join/lobby、满员拒绝、非房主不可开局、快照下发与输入驱动、AI 补位、限时结算回 Waiting、断线、非法消息、快照契约），总计 41/41
+  - 冒烟验证：HTTP 200、WS join→welcome+lobbyState、双人开局→快照 ~60Hz 下发（12s 内 539 帧）
+  - **M2 遗留到 M4**：断线 AI 托管/重连接管（FR-N4）、聊天（D4）、房间配置（FR-N3）、8 坦克上限、输入限流（NFR-6 完整版）
+- [ ] **M3 内容完整**（下一里程碑）：四级坦克、六种道具、中立基地机制、音频、6 张地图
 
 ## M1 实现要点（后续开发需遵守）
 1. **输入统一为位掩码**：`INPUT_UP=1/DOWN=2/LEFT=4/RIGHT=8/FIRE=16`（不是 `1<<Dir`！），真人与 AI 都走 `sim.setInput(id, mask)`。

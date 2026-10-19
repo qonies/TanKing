@@ -47,7 +47,7 @@ export interface Tank extends TankState {
 
 export interface Bullet extends BulletState {}
 
-const PALETTE = ['#e8c838', '#d84040', '#58b858', '#5878d8', '#c868d8', '#d88838', '#40c8b8', '#c8c8c8'];
+export const PALETTE = ['#e8c838', '#d84040', '#58b858', '#5878d8', '#c868d8', '#d88838', '#40c8b8', '#c8c8c8'];
 
 /**
  * 战斗模拟器（服务器权威逻辑，单机模式在客户端本地跑同一份代码）。

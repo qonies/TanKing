@@ -11,7 +11,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": ["vite/client"]
+    "types": ["vite/client", "node"]
   },
-  "include": ["shared", "client", "tests", "vite.config.ts", "vitest.config.ts"]
+  "include": ["shared", "client", "server", "tests", "vite.config.ts", "vitest.config.ts"]
 }

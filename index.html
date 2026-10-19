@@ -29,6 +29,30 @@
     #overlay.show { display: flex; }
     #overlay h1 { color: #e8c838; font-size: 28px; letter-spacing: 2px; }
     #overlay p { color: #aaa; }
+    #overlay { z-index: 1; }
+    #menu, #lobby {
+      position: absolute; inset: 0; z-index: 2;
+      display: none; flex-direction: column; align-items: center; justify-content: center;
+      gap: 14px; background: rgba(10, 10, 10, 0.94); text-align: center; padding: 20px;
+    }
+    #menu.show, #lobby.show { display: flex; }
+    #menu h1 { color: #e8c838; font-size: 30px; letter-spacing: 3px; }
+    #lobby h2 { color: #e8c838; font-size: 16px; }
+    .panel-hint { color: #777; font-size: 12px; }
+    #nick {
+      background: #111; border: 1px solid #555; color: #ddd;
+      padding: 8px 10px; font-family: inherit; font-size: 14px; width: 180px; text-align: center;
+    }
+    .btns { display: flex; gap: 10px; }
+    .btns button, #btn-start {
+      background: #6b6b6b; color: #fff; border: 0; padding: 8px 18px;
+      font-family: inherit; font-size: 14px; cursor: pointer;
+    }
+    .btns button:hover, #btn-start:hover { background: #8a8a8a; }
+    #btn-start.hidden { display: none; }
+    #members { display: flex; flex-direction: column; gap: 4px; min-width: 180px; font-size: 13px; }
+    .member-row { display: flex; justify-content: space-between; gap: 12px; background: #262626; padding: 4px 8px; }
+    #menu-msg, #lobby-status { color: #c96; font-size: 12px; min-height: 14px; }
     #hud {
       width: 240px; display: flex; flex-direction: column; gap: 12px;
       font-size: 13px;
@@ -47,6 +71,22 @@
     <div id="stage">
       <canvas id="game" width="416" height="416"></canvas>
       <div id="overlay"><h1 id="overlay-title"></h1><p id="overlay-text"></p></div>
+      <div id="menu" class="show">
+        <h1>TanKing</h1>
+        <p class="panel-hint">FC 坦克大战 · 局域网 PvP 复刻</p>
+        <input id="nick" maxlength="12" placeholder="输入昵称（可选）" />
+        <div class="btns">
+          <button id="btn-single">单机模式</button>
+          <button id="btn-online">联机对战</button>
+        </div>
+        <p id="menu-msg"></p>
+      </div>
+      <div id="lobby">
+        <h2>房间</h2>
+        <div id="members"></div>
+        <button id="btn-start" class="hidden">开始游戏</button>
+        <p id="lobby-status"></p>
+      </div>
     </div>
     <div id="hud">
       <h2>TanKing · 死亡竞技</h2>
@@ -55,7 +95,7 @@
       <ul id="feed"></ul>
       <div id="help">
         操作：方向键 / WASD 移动，空格 / J 射击<br />
-        R 重新开始 · 先达 1000 分获胜；8 分钟限时后积分最高者获胜
+        单机模式按 R 重新开始 · 先达 1000 分获胜；8 分钟限时后积分最高者获胜
       </div>
     </div>
   </div>

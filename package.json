@@ -1,18 +1,27 @@
 {
   "name": "tanking",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -k -n client,server -c yellow,green \"vite\" \"tsx watch server/index.ts\"",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
+    "server": "tsx server/index.ts",
+    "start": "tsx server/index.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/ws": "^8.18.2",
+    "concurrently": "^10.0.6",
+    "tsx": "^4.23.15",
     "typescript": "^5.6.3",
     "vite": "^6.0.7",
     "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
   }
 }
