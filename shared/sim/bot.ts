@@ -1,5 +1,6 @@
 import {
   CELL,
+  clamp,
   Dir,
   DIR_INPUT,
   DIR_VEC,
@@ -42,7 +43,7 @@ export class BotController {
 
   /** 每 tick 调用，返回本 tick 输入掩码 */
   update(): number {
-    const me = this.sim.tanks[this.tankId];
+    const me = this.sim.tankById(this.tankId);
     if (!me || !me.alive || this.sim.gameOver) {
       this.mask = 0;
       return 0;
@@ -73,23 +74,25 @@ export class BotController {
 
   private decide(me: Tank): void {
     const enemy = this.nearestEnemy(me);
+    // 困难档（FR-A3）：无对枪机会时优先逼近场上的道具（抢道具）
+    if (this.difficulty === 'hard' && this.sim.powerups.length > 0) {
+      const aligned = enemy !== undefined && this.alignedDir(me, enemy) !== null;
+      if (!aligned) {
+        const pu = this.sim.powerups[0]!;
+        const d = this.bfsDir(me, pu.x + TANK_SIZE / 2, pu.y + TANK_SIZE / 2, -1);
+        if (d !== null) {
+          this.mask = DIR_INPUT[d]!;
+          return;
+        }
+      }
+    }
     if (enemy) {
-      const mcx = me.x + TANK_SIZE / 2;
-      const mcy = me.y + TANK_SIZE / 2;
-      const ecx = enemy.x + TANK_SIZE / 2;
-      const ecy = enemy.y + TANK_SIZE / 2;
-
-      if (Math.abs(mcx - ecx) <= CELL / 2 && mcy !== ecy) {
-        const dir: DirT = ecy < mcy ? Dir.Up : Dir.Down;
+      const dir = this.alignedDir(me, enemy);
+      if (dir !== null) {
         if (!this.tryFire(me, enemy, dir)) this.mask = DIR_INPUT[dir]!;
         return;
       }
-      if (Math.abs(mcy - ecy) <= CELL / 2 && mcx !== ecx) {
-        const dir: DirT = ecx < mcx ? Dir.Left : Dir.Right;
-        if (!this.tryFire(me, enemy, dir)) this.mask = DIR_INPUT[dir]!;
-        return;
-      }
-      const d = this.bfsDir(me, enemy);
+      const d = this.bfsDir(me, enemy.x + TANK_SIZE / 2, enemy.y + TANK_SIZE / 2, enemy.id);
       if (d !== null) {
         this.mask = DIR_INPUT[d]!;
         return;
@@ -99,6 +102,17 @@ export class BotController {
     if (!(this.mask & INPUT_DIR_MASK) || this.rng() < 0.3) {
       this.mask = DIR_INPUT[Math.floor(this.rng() * 4) as DirT]!;
     }
+  }
+
+  /** 与目标同行/同列（半格容差）时的开火方向；未对齐返回 null */
+  private alignedDir(me: Tank, enemy: TankState): DirT | null {
+    const mcx = me.x + TANK_SIZE / 2;
+    const mcy = me.y + TANK_SIZE / 2;
+    const ecx = enemy.x + TANK_SIZE / 2;
+    const ecy = enemy.y + TANK_SIZE / 2;
+    if (Math.abs(mcx - ecx) <= CELL / 2 && mcy !== ecy) return ecy < mcy ? Dir.Up : Dir.Down;
+    if (Math.abs(mcy - ecy) <= CELL / 2 && mcx !== ecx) return ecx < mcx ? Dir.Left : Dir.Right;
+    return null;
   }
 
   private tryFire(me: Tank, enemy: TankState, dir: DirT): boolean {
@@ -113,11 +127,18 @@ export class BotController {
   private nearestEnemy(me: Tank): Tank | undefined {
     let best: Tank | undefined;
     let bestD = Infinity;
+    const base = this.sim.map.base;
     for (const t of this.sim.tanks) {
       if (t.id === me.id || !t.alive) continue;
       const dx = t.x - me.x;
       const dy = t.y - me.y;
-      const d = dx * dx + dy * dy;
+      let d = dx * dx + dy * dy;
+      // 困难档护家（FR-A3）：优先攻击逼近基地的敌人
+      if (this.difficulty === 'hard' && base && this.sim.baseAlive) {
+        const bx = t.x - base.x;
+        const by = t.y - base.y;
+        if (bx * bx + by * by <= 4 * CELL * (4 * CELL)) d = 0;
+      }
       if (d < bestD) { bestD = d; best = t; }
     }
     return best;
@@ -142,14 +163,16 @@ export class BotController {
 
   /**
    * BFS 寻路：节点 = 坦克左上角所在小格 (i,j)，i,j ∈ 0..24（坦克占 2×2 小格）。
-   * 钢/水阻塞；砖可通行（配合卡墙开火开路）；其他坦克占位阻塞（目标除外）。
+   * 钢/水阻塞；砖可通行（配合卡墙开火开路）；其他坦克占位阻塞（ignoreId 除外）。
+   * 目标为任意像素点（取其中心折算小格）。
    */
-  private bfsDir(me: Tank, enemy: Tank): DirT | null {
+  private bfsDir(me: Tank, tx: number, ty: number, ignoreId: number): DirT | null {
     const N = GRID - 1;
     const si = Math.round(me.x / CELL);
     const sj = Math.round(me.y / CELL);
-    const gi = Math.round(enemy.x / CELL);
-    const gj = Math.round(enemy.y / CELL);
+    // 目标为中心像素折算的小格，需钳制在场内（坦克贴边时中心折算可能 = GRID-1 越过 N-1）
+    const gi = clamp(Math.round(tx / CELL), 0, N - 1);
+    const gj = clamp(Math.round(ty / CELL), 0, N - 1);
     if (si < 0 || sj < 0 || si >= N || sj >= N) return null;
 
     const blocked = new Uint8Array(N * N);
@@ -167,7 +190,7 @@ export class BotController {
       }
     }
     for (const t of this.sim.tanks) {
-      if (!t.alive || t.id === me.id || t.id === enemy.id) continue;
+      if (!t.alive || t.id === me.id || t.id === ignoreId) continue;
       const ti = Math.round(t.x / CELL);
       const tj = Math.round(t.y / CELL);
       if (ti >= 0 && tj >= 0 && ti < N && tj < N) blocked[tj * N + ti] = 1;

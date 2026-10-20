@@ -22,6 +22,9 @@ export function charToTerrain(ch: string): TerrainType {
  * terrain 矩阵应为 size×size（26×26）字符；兼容 13×13 大格矩阵（自动 ×2 展开）。
  */
 export function loadMap(def: MapDef): LoadedMap {
+  if (def.size !== undefined && def.size !== GRID && def.size !== GRID / 2) {
+    throw new Error(`地图 "${def.name}" size 字段非法: ${def.size}（应为 ${GRID} 或 ${GRID / 2}）`);
+  }
   const rows = def.terrain;
   if (rows.length !== GRID && rows.length !== GRID / 2) {
     throw new Error(`地图 "${def.name}" 行数非法: ${rows.length}（应为 ${GRID} 或 ${GRID / 2}）`);
@@ -43,12 +46,20 @@ export function loadMap(def: MapDef): LoadedMap {
   if (!def.spawns || def.spawns.length === 0) {
     throw new Error(`地图 "${def.name}" 缺少出生点`);
   }
+  // 出生点越界校验（坦克占 2×2 小格，左上角最大为 GRID-2）
+  for (const p of def.spawns) {
+    if (!Number.isInteger(p.x) || !Number.isInteger(p.y) ||
+        p.x < 0 || p.y < 0 || p.x > GRID - 2 || p.y > GRID - 2) {
+      throw new Error(`地图 "${def.name}" 出生点越界: (${p.x}, ${p.y})`);
+    }
+  }
   const spawns = def.spawns.map((p: PointDef) => ({ x: p.x * CELL, y: p.y * CELL }));
 
   // 基地 / 道具点：小格坐标 × CELL 折算像素（占 32×32，需大格对齐）
   const base = def.base ? { x: def.base.x * CELL, y: def.base.y * CELL } : null;
-  if (base && (base.x % TANK_SIZE !== 0 || base.y % TANK_SIZE !== 0)) {
-    throw new Error(`地图 "${def.name}" 基地点位未按大格对齐`);
+  if (base && (base.x % TANK_SIZE !== 0 || base.y % TANK_SIZE !== 0 ||
+      base.x < 0 || base.y < 0 || base.x > FIELD - TANK_SIZE || base.y > FIELD - TANK_SIZE)) {
+    throw new Error(`地图 "${def.name}" 基地点位非法（需大格对齐且在场地内）`);
   }
   const powerupSpots = (def.powerupSpots ?? []).map((p: PointDef) => ({ x: p.x * CELL, y: p.y * CELL }));
   for (const s of powerupSpots) {

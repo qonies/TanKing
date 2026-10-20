@@ -445,14 +445,17 @@ export class BattleSim {
     }
 
     // 定点刷新：同时在场 ≤ MAX_POWERUPS，地图需配置点位
-    if (this.powerups.length < MAX_POWERUPS && this.map.powerupSpots.length > 0 && --this.powerupCd <= 0) {
+    // 冷却恒定流转：满员/点位被占而跳过本轮时也照常重置，避免清空后重新等满一整段间隔（M4 修复）
+    if (this.map.powerupSpots.length > 0 && --this.powerupCd <= 0) {
       this.powerupCd = this.powerupInterval;
-      const spot = this.map.powerupSpots[Math.floor(this.rng() * this.map.powerupSpots.length)]!;
-      const kinds = Object.values(PowerupType).filter((v): v is PowerupType => typeof v === 'number');
-      const kind = kinds[Math.floor(this.rng() * kinds.length)]!;
-      const occupied = this.tanks.some((t) => t.alive && rectsOverlap(t.x, t.y, TANK_SIZE, TANK_SIZE, spot.x, spot.y, TANK_SIZE, TANK_SIZE));
-      if (!occupied) {
-        this.powerups.push({ id: this.nextPowerupId++, type: kind, x: spot.x, y: spot.y });
+      if (this.powerups.length < MAX_POWERUPS) {
+        const spot = this.map.powerupSpots[Math.floor(this.rng() * this.map.powerupSpots.length)]!;
+        const kinds = Object.values(PowerupType).filter((v): v is PowerupType => typeof v === 'number');
+        const kind = kinds[Math.floor(this.rng() * kinds.length)]!;
+        const occupied = this.tanks.some((t) => t.alive && rectsOverlap(t.x, t.y, TANK_SIZE, TANK_SIZE, spot.x, spot.y, TANK_SIZE, TANK_SIZE));
+        if (!occupied) {
+          this.powerups.push({ id: this.nextPowerupId++, type: kind, x: spot.x, y: spot.y });
+        }
       }
     }
 
@@ -517,8 +520,8 @@ export class BattleSim {
 
   // ---------------------------------------------------------------- 击杀 / 结算
 
-  /** 按 id 查找坦克（不依赖 id === 数组下标的隐式约定，M2 房间玩家进出时安全） */
-  private tankById(id: number): Tank | undefined {
+  /** 按 id 查找坦克（不依赖 id === 数组下标的隐式约定，M2 房间玩家进出时安全；M4 起 BotController 也经此寻址） */
+  tankById(id: number): Tank | undefined {
     return this.tanks.find((t) => t.id === id);
   }
 

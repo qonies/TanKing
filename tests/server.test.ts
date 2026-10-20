@@ -23,7 +23,7 @@ class FakeConn implements Conn {
 }
 
 function makeRoom(opts?: ConstructorParameters<typeof Room>[1]): { room: Room; a: FakeConn; b: FakeConn } {
-  const room = new Room([makeMap([], TWO_SPAWNS)], opts);
+  const room = new Room([makeMap([], TWO_SPAWNS)], { maxTanks: 2, ...opts });
   const a = new FakeConn(1);
   const b = new FakeConn(2);
   room.addConnection(a);
@@ -50,7 +50,7 @@ describe('L2 集成：join 与大厅（IT-01）', () => {
   });
 
   it('房间满时拒绝加入并回 error', () => {
-    const room = new Room([makeMap([], TWO_SPAWNS)]);
+    const room = new Room([makeMap([], TWO_SPAWNS)], { maxTanks: 2 });
     const a = new FakeConn(1);
     const b = new FakeConn(2);
     const c = new FakeConn(3);
@@ -92,7 +92,7 @@ describe('L2 集成：开局与快照同步（IT-02/03）', () => {
   });
 
   it('人数不足时 AI 补位并参与行动', () => {
-    const room = new Room([makeMap([], TWO_SPAWNS)], { seed: 7 });
+    const room = new Room([makeMap([], TWO_SPAWNS)], { seed: 7, maxTanks: 2 });
     const a = new FakeConn(1);
     room.addConnection(a);
     room.handleMessage(1, { t: 'join', name: 'Solo' });
@@ -121,15 +121,16 @@ describe('L2 集成：回合结束与断线（IT-05/06）', () => {
     expect(room.phase).toBe('countdown');
   });
 
-  it('对局中断线：成员移除并广播，服务器不崩溃', () => {
+  it('对局中断线：坦克由 AI 托管、成员标记离线，服务器不崩溃（FR-N4）', () => {
     const { room, a } = makeRoom();
     startPlaying(room);
     room.handleMessage(2, { t: 'input', mask: INPUT_LEFT });
     room.removeConnection(2);
     const lobby = a.last('lobbyState')!;
-    expect(lobby.players.map((p) => p.name)).toEqual(['Alice']);
+    const bob = lobby.players.find((p) => p.name === 'Bob' && !p.isBot)!;
+    expect(bob.online).toBe(false); // 成员保留（60s 内可重连）
     expect(room.ownerConnId()).toBe(1);
-    for (let i = 0; i < 60; i++) room.step(); // 对局继续
+    for (let i = 0; i < 60; i++) room.step(); // 对局继续，托管 AI 驱动其坦克
     expect(room.phase).toBe('playing');
   });
 });

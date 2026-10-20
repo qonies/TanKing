@@ -40,8 +40,8 @@ const server = createServer((req: IncomingMessage, res: ServerResponse): void =>
   }
 });
 
-// ---- 游戏房间（内置地图轮换） ----
-const room = new Room(MAPS);
+// ---- 游戏房间（内置地图轮换；D3 默认 6 坦克，房主可配置 2~8） ----
+const room = new Room(MAPS, { maxTanks: 6 });
 
 // ---- WebSocket：与 HTTP 共享端口，路径 /ws ----
 const wss = new WebSocketServer({ server, path: '/ws' });

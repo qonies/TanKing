@@ -1,7 +1,7 @@
 {
   "name": "tanking",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n client,server -c yellow,green \"vite\" \"tsx watch server/index.ts\"",

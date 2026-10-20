@@ -5,7 +5,8 @@ import { BotController } from '../shared/sim/bot';
 import { mulberry32 } from '../shared/rng';
 import { MAPS, mapByName } from '../shared/maps';
 import type { LobbyPlayer, RoomPhase, S2CMessage, Snapshot } from '../shared/protocol';
-import { KeyboardInput } from './input';
+import type { BotDifficulty } from '../shared/sim/bot';
+import { KeyboardInput, type Action } from './input';
 import { Renderer } from './renderer';
 import { NetClient } from './net';
 import { SnapshotBuffer, TerrainView } from './interp';
@@ -27,10 +28,20 @@ const lobbyEl = document.getElementById('lobby')!;
 const membersEl = document.getElementById('members')!;
 const btnStart = document.getElementById('btn-start')!;
 const lobbyStatus = document.getElementById('lobby-status')!;
+const cfgRow = document.getElementById('cfg-row')!;
+const cfgTanks = document.getElementById('cfg-tanks') as HTMLSelectElement;
+const cfgDiff = document.getElementById('cfg-diff') as HTMLSelectElement;
+const chatLog = document.getElementById('chat-log')!;
+const chatInput = document.getElementById('chat-input') as HTMLInputElement;
+const btnChat = document.getElementById('btn-chat')!;
+const keysPanel = document.getElementById('keys')!;
+const btnKeys = document.getElementById('btn-keys')!;
+const btnKeysClose = document.getElementById('btn-keys-close')!;
 
 const SEED = 20261019;
 const FEED_TICKS = 240; // 播报停留 4 秒
 const INTERP_DELAY = 2; // 快照插值延迟帧数（技术路线 §4.3）
+const QUICK_PHRASES = ['收到！', '小心基地！', '跟我来！', '快抢道具！', '打得漂亮！'];
 
 interface FeedItem { text: string; until: number }
 type Mode = 'menu' | 'single' | 'online';
@@ -40,6 +51,7 @@ let renderer = new Renderer(ctx);
 let feed: FeedItem[] = [];
 let scoreRows = new Map<number, { score: HTMLElement; status: HTMLElement }>();
 const audio = new AudioFx();
+const keys = new KeyboardInput(() => { if (mode === 'single') startSingle(); });
 
 // ---- 单机状态 ----
 let sim: BattleSim;
@@ -56,9 +68,11 @@ let lastSentMask = 0;
 let forceSendCd = 0;
 let onlineTick = 0;
 let onlineHudCd = 0;
+let roomPhase: RoomPhase = 'waiting';
 
 function showPanel(el: HTMLElement | null): void {
   for (const p of [menuEl, lobbyEl]) p.classList.toggle('show', p === el);
+  keysPanel.classList.remove('show');
   overlay.classList.remove('show');
 }
 
@@ -165,6 +179,8 @@ function goOnline(): void {
   playersByTank.clear();
   myConnId = -1;
   lastSentMask = 0;
+  roomPhase = 'waiting';
+  chatLog.replaceChildren();
   net.onOpen = () => net.send({ t: 'join', name: nickInput.value });
   net.onMessage = handleNetMessage;
   net.onClose = () => showMenu('与服务器断开连接');
@@ -187,7 +203,7 @@ function handleNetMessage(msg: S2CMessage): void {
       break;
     }
     case 'lobbyState':
-      applyLobbyState(msg.phase, msg.ownerConnId, msg.secondsLeft, msg.players);
+      applyLobbyState(msg.phase, msg.ownerConnId, msg.secondsLeft, msg.players, msg.maxTanks, msg.botDifficulty);
       break;
     case 'snapshot':
       buffer.push({ tick: msg.tick, tanks: msg.tanks, bullets: msg.bullets, powerups: msg.powerups, baseAlive: msg.baseAlive });
@@ -197,10 +213,37 @@ function handleNetMessage(msg: S2CMessage): void {
       if (msg.event.type === 'brickBreak') terrain.breakBrick(msg.event.x, msg.event.y);
       handleSimEvent(msg.event, onlineTick, (id) => playersByTank.get(id)?.name ?? `P${id}`);
       break;
+    case 'chat': {
+      appendChat(msg.from, msg.color, msg.text);
+      if (roomPhase === 'playing' || roomPhase === 'countdown') {
+        feed.push({ text: `${msg.from}: ${msg.text}`, until: onlineTick + FEED_TICKS });
+      }
+      break;
+    }
     case 'error':
       showMenu(msg.message);
       break;
   }
+}
+
+function appendChat(from: string, color: string, text: string): void {
+  const div = document.createElement('div');
+  const name = document.createElement('b');
+  name.textContent = `${from}: `;
+  name.style.color = color;
+  const body = document.createElement('span');
+  body.textContent = text;
+  div.append(name, body);
+  chatLog.appendChild(div);
+  while (chatLog.childElementCount > 50) chatLog.firstElementChild?.remove();
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function sendChat(): void {
+  const text = chatInput.value.trim();
+  if (!text || !net.connected) return;
+  net.send({ t: 'chat', text });
+  chatInput.value = '';
 }
 
 function applyLobbyState(
@@ -208,29 +251,36 @@ function applyLobbyState(
   ownerConnId: number,
   secondsLeft: number | null,
   players: LobbyPlayer[],
+  maxTanks: number,
+  botDifficulty: BotDifficulty,
 ): void {
+  roomPhase = phase;
   playersByTank = new Map(players.filter((p) => p.tankId >= 0).map((p) => [p.tankId, p]));
   rebuildScoreRows([...playersByTank.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([tankId, p]) => ({ tankId, name: p.name, color: p.color })));
   btnStart.classList.toggle('hidden', myConnId !== ownerConnId);
+  const isLobbyPhase = phase === 'waiting' || phase === 'roundEnd';
+  cfgRow.classList.toggle('hidden', !(isLobbyPhase && myConnId === ownerConnId));
+  if (cfgTanks.value !== String(maxTanks)) cfgTanks.value = String(maxTanks);
+  if (cfgDiff.value !== botDifficulty) cfgDiff.value = botDifficulty;
 
-  if (phase === 'waiting' || phase === 'roundEnd') {
+  if (isLobbyPhase) {
     showPanel(lobbyEl);
     membersEl.replaceChildren(...players.map((p) => {
       const row = document.createElement('div');
       row.className = 'member-row';
       const n = document.createElement('span');
-      n.textContent = p.name;
+      n.textContent = p.isBot && !p.online ? `${p.name}（托管）` : p.name;
       n.style.color = p.color;
       const tag = document.createElement('span');
-      tag.textContent = p.connId === ownerConnId ? '房主' : p.isBot ? 'AI' : '玩家';
+      tag.textContent = p.isBot ? 'AI' : !p.online ? '离线' : p.connId === ownerConnId ? '房主' : '玩家';
       row.append(n, tag);
       return row;
     }));
     lobbyStatus.textContent = phase === 'roundEnd'
       ? '本局结束，房主可开始下一局'
-      : `房间内 ${players.length} 人（真人 ${players.filter((p) => !p.isBot).length}）· 人数不足由 AI 补位`;
+      : `房间内 ${players.length}/${maxTanks} 坦克（真人 ${players.filter((p) => !p.isBot).length}）· 人数不足由 AI 补位`;
   } else if (phase === 'countdown') {
     showPanel(null);
     overlayTitle.textContent = '准备';
@@ -272,14 +322,56 @@ function renderOnline(): void {
 
 // ---- 主循环 ----
 
-const keys = new KeyboardInput(() => { if (mode === 'single') startSingle(); });
-
 btnSingle.addEventListener('click', () => { audio.unlock(); startSingle(); });
 btnOnline.addEventListener('click', () => { audio.unlock(); goOnline(); });
 btnStart.addEventListener('click', () => net.send({ t: 'start' }));
 // 输入昵称时阻止游戏键位捕获（Space/方向键）
 nickInput.addEventListener('keydown', (e) => e.stopPropagation());
 nickInput.addEventListener('keyup', (e) => e.stopPropagation());
+
+// ---- 房主配置（FR-N3）----
+cfgTanks.addEventListener('change', () => net.send({ t: 'config', maxTanks: Number(cfgTanks.value) }));
+cfgDiff.addEventListener('change', () => net.send({ t: 'config', botDifficulty: cfgDiff.value as BotDifficulty }));
+
+// ---- 大厅聊天 / 游戏内快捷短语（D4）----
+btnChat.addEventListener('click', sendChat);
+chatInput.addEventListener('keydown', (e) => {
+  e.stopPropagation();
+  if (e.key === 'Enter') sendChat();
+});
+chatInput.addEventListener('keyup', (e) => e.stopPropagation());
+window.addEventListener('keydown', (e) => {
+  if (mode !== 'online' || (roomPhase !== 'playing' && roomPhase !== 'countdown')) return;
+  const m = /^Digit([1-5])$/.exec(e.code);
+  if (!m) return;
+  const el = document.activeElement;
+  if (el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement) return;
+  net.send({ t: 'chat', text: QUICK_PHRASES[Number(m[1]) - 1]! });
+});
+
+// ---- 键位设置（FR-S1）----
+function refreshBindButtons(): void {
+  for (const btn of document.querySelectorAll<HTMLButtonElement>('.bind-btn')) {
+    btn.textContent = keys.getBind(btn.dataset.action as Action);
+  }
+}
+btnKeys.addEventListener('click', () => {
+  audio.unlock();
+  menuEl.classList.remove('show');
+  keysPanel.classList.add('show');
+  refreshBindButtons();
+});
+btnKeysClose.addEventListener('click', () => {
+  keysPanel.classList.remove('show');
+  menuEl.classList.add('show');
+});
+for (const btn of document.querySelectorAll<HTMLButtonElement>('.bind-btn')) {
+  btn.addEventListener('click', () => {
+    keys.capturing = btn.dataset.action as Action;
+    btn.textContent = '按任意键…';
+  });
+}
+keys.onBindChange = refreshBindButtons;
 
 let last = performance.now();
 let acc = 0;

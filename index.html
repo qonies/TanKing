@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TanKing — M1 单机核心</title>
+  <title>TanKing — 局域网 PvP 坦克大战</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -49,10 +49,28 @@
       font-family: inherit; font-size: 14px; cursor: pointer;
     }
     .btns button:hover, #btn-start:hover { background: #8a8a8a; }
-    #btn-start.hidden { display: none; }
+    #btn-start.hidden, .hidden { display: none; }
     #members { display: flex; flex-direction: column; gap: 4px; min-width: 180px; font-size: 13px; }
     .member-row { display: flex; justify-content: space-between; gap: 12px; background: #262626; padding: 4px 8px; }
     #menu-msg, #lobby-status { color: #c96; font-size: 12px; min-height: 14px; }
+    #cfg-row { display: flex; gap: 14px; font-size: 13px; align-items: center; }
+    #cfg-row select { background: #111; color: #ddd; border: 1px solid #555; font-family: inherit; padding: 3px 6px; }
+    #chat-log {
+      width: 270px; height: 96px; overflow-y: auto; background: #111; border: 1px solid #444;
+      font-size: 12px; text-align: left; padding: 4px 8px; display: flex; flex-direction: column; gap: 2px;
+    }
+    #chat-row { display: flex; gap: 6px; }
+    #chat-input { background: #111; border: 1px solid #555; color: #ddd; padding: 6px 8px; font-family: inherit; font-size: 13px; width: 200px; }
+    #keys {
+      position: absolute; inset: 0; z-index: 3;
+      display: none; flex-direction: column; align-items: center; justify-content: center;
+      gap: 10px; background: rgba(10, 10, 10, 0.96); text-align: center;
+    }
+    #keys.show { display: flex; }
+    #keys h2 { color: #e8c838; font-size: 16px; }
+    .key-row { display: flex; justify-content: space-between; align-items: center; width: 220px; font-size: 14px; }
+    .bind-btn { background: #333; color: #e8c838; border: 1px solid #666; padding: 4px 10px; font-family: inherit; cursor: pointer; min-width: 110px; }
+    .bind-btn:hover { background: #454545; }
     #hud {
       width: 240px; display: flex; flex-direction: column; gap: 12px;
       font-size: 13px;
@@ -78,14 +96,45 @@
         <div class="btns">
           <button id="btn-single">单机模式</button>
           <button id="btn-online">联机对战</button>
+          <button id="btn-keys">键位设置</button>
         </div>
         <p id="menu-msg"></p>
+      </div>
+      <div id="keys">
+        <h2>键位设置</h2>
+        <div class="key-row"><span>向上</span><button class="bind-btn" data-action="up"></button></div>
+        <div class="key-row"><span>向下</span><button class="bind-btn" data-action="down"></button></div>
+        <div class="key-row"><span>向左</span><button class="bind-btn" data-action="left"></button></div>
+        <div class="key-row"><span>向右</span><button class="bind-btn" data-action="right"></button></div>
+        <div class="key-row"><span>射击</span><button class="bind-btn" data-action="fire"></button></div>
+        <p class="panel-hint">点击按键后按下新键（自动保存）；WASD / J 始终作为备用键可用</p>
+        <button id="btn-keys-close">返回</button>
       </div>
       <div id="lobby">
         <h2>房间</h2>
         <div id="members"></div>
+        <div id="cfg-row" class="hidden">
+          <label>坦克数
+            <select id="cfg-tanks">
+              <option>2</option><option>3</option><option>4</option>
+              <option>5</option><option>6</option><option>7</option><option>8</option>
+            </select>
+          </label>
+          <label>AI 难度
+            <select id="cfg-diff">
+              <option value="easy">简单</option>
+              <option value="normal">普通</option>
+              <option value="hard">困难</option>
+            </select>
+          </label>
+        </div>
         <button id="btn-start" class="hidden">开始游戏</button>
         <p id="lobby-status"></p>
+        <div id="chat-log"></div>
+        <div id="chat-row">
+          <input id="chat-input" maxlength="60" placeholder="聊天（Enter 发送）" />
+          <button id="btn-chat">发送</button>
+        </div>
       </div>
     </div>
     <div id="hud">
@@ -94,8 +143,9 @@
       <h2>击杀播报</h2>
       <ul id="feed"></ul>
       <div id="help">
-        操作：方向键 / WASD 移动，空格 / J 射击<br />
-        单机模式按 R 重新开始 · 先达 1000 分获胜；8 分钟限时后积分最高者获胜
+        操作：方向键 / WASD 移动，空格 / J 射击（主菜单可自定义键位）<br />
+        对局中按 1~5 发送快捷短语 · 按 R 重新开始（单机）<br />
+        先达 1000 分获胜；8 分钟限时后积分最高者获胜
       </div>
     </div>
   </div>
