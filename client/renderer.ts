@@ -6,18 +6,25 @@ import {
   GRID,
   TANK_SIZE,
 } from '../shared/constants';
-import { TerrainType, type SimEvent } from '../shared/types';
+import { PowerupType, TerrainType, type SimEvent } from '../shared/types';
 
 interface Fx { x: number; y: number; big: boolean; t: number }
 
-/** 渲染视图抽象：单机模式直接传 BattleSim（结构兼容），联机模式传插值快照视图 */
+/** 渲染视图抽象：单机模式直接传 BattleSim 适配视图，联机模式传插值快照视图 */
 export interface RenderTank {
   x: number;
   y: number;
   dir: Dir;
   alive: boolean;
   shieldTicks: number;
+  frozenTicks: number;
   color: string;
+}
+
+export interface RenderPowerup {
+  x: number;
+  y: number;
+  type: number;
 }
 
 export interface RenderView {
@@ -25,6 +32,9 @@ export interface RenderView {
   bullets: readonly { x: number; y: number }[];
   tanks: readonly RenderTank[];
   terrainAt(cx: number, cy: number): TerrainType;
+  base: { x: number; y: number } | null;
+  baseAlive: boolean;
+  powerups: readonly RenderPowerup[];
 }
 
 const COLORS: Record<TerrainType, string> = {
@@ -75,6 +85,10 @@ export class Renderer {
       }
     }
 
+    // 2.5 基地（FR-M6）与道具（地面层，坦克之下）
+    if (view.base) this.drawBase(view.base.x, view.base.y, view.baseAlive);
+    for (const p of view.powerups) this.drawPowerup(p.x, p.y, p.type);
+
     // 3. 子弹 → 坦克（含护盾）
     for (const b of view.bullets) {
       ctx.fillStyle = '#f8f8f8';
@@ -84,6 +98,10 @@ export class Renderer {
       if (!t.alive) continue;
       this.drawTank(t.x, t.y, t.dir, t.color);
       if (t.shieldTicks > 0) this.drawShield(t.x, t.y, view.tick % 8 < 4);
+      if (t.frozenTicks > 0) {
+        ctx.fillStyle = 'rgba(140, 210, 255, 0.55)';
+        ctx.fillRect(t.x, t.y, TANK_SIZE, TANK_SIZE);
+      }
     }
 
     // 4. 砖 / 钢（坦克层之上）
@@ -122,6 +140,43 @@ export class Renderer {
 
     // 6. 爆炸特效
     this.drawFx();
+  }
+
+  private drawBase(x: number, y: number, alive: boolean): void {
+    const ctx = this.ctx;
+    ctx.fillStyle = alive ? '#caa53d' : '#3a3a3a';
+    ctx.fillRect(x + 2, y + 2, TANK_SIZE - 4, TANK_SIZE - 4);
+    ctx.strokeStyle = '#6b5410';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 4, y + 4, TANK_SIZE - 8, TANK_SIZE - 8);
+    ctx.fillStyle = alive ? '#6b5410' : '#191919';
+    ctx.font = '14px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(alive ? '鹰' : '×', x + TANK_SIZE / 2, y + TANK_SIZE / 2 + 1);
+  }
+
+  private static readonly POWERUP_STYLE: Record<number, { bg: string; ch: string }> = {
+    [PowerupType.Star]: { bg: '#e8c838', ch: '★' },
+    [PowerupType.Helmet]: { bg: '#5878d8', ch: '盔' },
+    [PowerupType.Timer]: { bg: '#58b858', ch: '钟' },
+    [PowerupType.Bomb]: { bg: '#d84040', ch: '爆' },
+    [PowerupType.Shovel]: { bg: '#c868d8', ch: '锹' },
+    [PowerupType.Tank]: { bg: '#40c8b8', ch: '坦' },
+  };
+
+  private drawPowerup(x: number, y: number, type: number): void {
+    const ctx = this.ctx;
+    const style = Renderer.POWERUP_STYLE[type] ?? { bg: '#c8c8c8', ch: '?' };
+    ctx.fillStyle = '#f8f8f8';
+    ctx.fillRect(x, y, TANK_SIZE, TANK_SIZE);
+    ctx.fillStyle = style.bg;
+    ctx.fillRect(x + 3, y + 3, TANK_SIZE - 6, TANK_SIZE - 6);
+    ctx.fillStyle = '#111';
+    ctx.font = '16px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(style.ch, x + TANK_SIZE / 2, y + TANK_SIZE / 2 + 1);
   }
 
   private drawTank(x: number, y: number, dir: Dir, color: string): void {

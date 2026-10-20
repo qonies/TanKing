@@ -3,14 +3,13 @@ import type { MapDef, SimEvent } from '../shared/types';
 import { BattleSim } from '../shared/sim/sim';
 import { BotController } from '../shared/sim/bot';
 import { mulberry32 } from '../shared/rng';
+import { MAPS, mapByName } from '../shared/maps';
 import type { LobbyPlayer, RoomPhase, S2CMessage, Snapshot } from '../shared/protocol';
 import { KeyboardInput } from './input';
 import { Renderer } from './renderer';
 import { NetClient } from './net';
 import { SnapshotBuffer, TerrainView } from './interp';
-import mapJson from '../maps/map01.json';
-
-const mapDef = mapJson as unknown as MapDef;
+import { AudioFx } from './audio';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -40,6 +39,7 @@ let mode: Mode = 'menu';
 let renderer = new Renderer(ctx);
 let feed: FeedItem[] = [];
 let scoreRows = new Map<number, { score: HTMLElement; status: HTMLElement }>();
+const audio = new AudioFx();
 
 // ---- 单机状态 ----
 let sim: BattleSim;
@@ -48,7 +48,8 @@ let bot: BotController;
 // ---- 联机状态 ----
 const net = new NetClient();
 const buffer = new SnapshotBuffer();
-let terrain = new TerrainView(mapDef);
+let onlineMap: MapDef = MAPS[0]!;
+let terrain = new TerrainView(MAPS[0]!);
 let playersByTank = new Map<number, LobbyPlayer>();
 let myConnId = -1;
 let lastSentMask = 0;
@@ -93,16 +94,33 @@ function renderFeed(tick: number): void {
   }));
 }
 
-/** 单机/联机共用的事件处理（击杀播报 + 结算覆盖层） */
+/** 单机/联机共用的事件处理（音效 + 击杀播报 + 结算覆盖层） */
 function handleSimEvent(e: SimEvent, tick: number, nameOf: (id: number) => string): void {
   renderer.pushEvent(e);
-  if (e.type === 'kill') {
-    feed.push({ text: `${nameOf(e.killerId)} 击毁了 ${nameOf(e.victimId)}`, until: tick + FEED_TICKS });
-  } else if (e.type === 'gameOver') {
-    const winner = e.winnerId !== null ? nameOf(e.winnerId) : null;
-    overlayTitle.textContent = winner ? `${winner} 获胜！` : '平局';
-    overlayText.textContent = mode === 'single' ? '按 R 重新开始' : '即将返回房间…';
-    overlay.classList.add('show');
+  switch (e.type) {
+    case 'shoot':
+      audio.shoot();
+      break;
+    case 'explosion':
+      audio.explosion(e.big);
+      break;
+    case 'powerupPickup':
+      if (e.kind === 0) audio.upgrade(); else audio.pickup(); // 0 = Star
+      break;
+    case 'baseDestroyed':
+      audio.baseDestroyed();
+      feed.push({ text: `${nameOf(e.byId)} 摧毁了中立基地（+500分）`, until: tick + FEED_TICKS });
+      break;
+    case 'kill':
+      feed.push({ text: `${nameOf(e.killerId)} 击毁了 ${nameOf(e.victimId)}`, until: tick + FEED_TICKS });
+      break;
+    case 'gameOver': {
+      const winner = e.winnerId !== null ? nameOf(e.winnerId) : null;
+      overlayTitle.textContent = winner ? `${winner} 获胜！` : '平局';
+      overlayText.textContent = mode === 'single' ? '按 R 重新开始' : '即将返回房间…';
+      overlay.classList.add('show');
+      break;
+    }
   }
 }
 
@@ -110,6 +128,7 @@ function handleSimEvent(e: SimEvent, tick: number, nameOf: (id: number) => strin
 
 function startSingle(): void {
   mode = 'single';
+  const mapDef = MAPS[Math.floor(Math.random() * MAPS.length)]!; // 单机随机地图
   sim = new BattleSim(mapDef, [
     { name: '玩家', isBot: false, color: '#e8c838' },
     { name: 'Bot-1', isBot: true, color: '#d84040' },
@@ -124,8 +143,8 @@ function startSingle(): void {
 function updateSingleHud(): void {
   sim.tanks.forEach((t) => {
     const row = scoreRows.get(t.id)!;
-    row.score.textContent = `${t.name}  ${t.score}分 / ${t.kills}杀`;
-    row.status.textContent = !t.alive ? '重生中…' : t.shieldTicks > 0 ? '护盾' : '存活';
+    row.score.textContent = `${t.name}  ${t.score}分 / ${t.kills}杀 / ★${t.level}`;
+    row.status.textContent = !t.alive ? '重生中…' : t.frozenTicks > 0 ? '冻结' : t.shieldTicks > 0 ? '护盾' : '存活';
   });
   renderFeed(sim.tick);
 }
@@ -139,7 +158,8 @@ function wsUrl(): string {
 
 function goOnline(): void {
   mode = 'online';
-  terrain = new TerrainView(mapDef);
+  onlineMap = MAPS[0]!;
+  terrain = new TerrainView(onlineMap);
   buffer.clear();
   feed = [];
   playersByTank.clear();
@@ -158,11 +178,19 @@ function handleNetMessage(msg: S2CMessage): void {
     case 'welcome':
       myConnId = msg.connId;
       break;
+    case 'start': {
+      // 开局：按服务器指定地图重建本地地形视图
+      onlineMap = mapByName(msg.map) ?? MAPS[0]!;
+      terrain = new TerrainView(onlineMap);
+      buffer.clear();
+      feed = [];
+      break;
+    }
     case 'lobbyState':
       applyLobbyState(msg.phase, msg.ownerConnId, msg.secondsLeft, msg.players);
       break;
     case 'snapshot':
-      buffer.push({ tick: msg.tick, tanks: msg.tanks, bullets: msg.bullets });
+      buffer.push({ tick: msg.tick, tanks: msg.tanks, bullets: msg.bullets, powerups: msg.powerups, baseAlive: msg.baseAlive });
       onlineTick = msg.tick;
       break;
     case 'event':
@@ -221,6 +249,9 @@ function renderOnline(): void {
       bullets: s.bullets,
       terrainAt: (cx, cy) => terrain.terrainAt(cx, cy),
       tanks: s.tanks.map((t) => ({ ...t, color: playersByTank.get(t.id)?.color ?? '#ffffff' })),
+      base: onlineMap.base ?? null,
+      baseAlive: s.baseAlive,
+      powerups: s.powerups,
     });
   }
   if (--onlineHudCd <= 0) {
@@ -231,8 +262,8 @@ function renderOnline(): void {
         const row = scoreRows.get(t.id);
         if (!row) return;
         const name = playersByTank.get(t.id)?.name ?? `P${t.id}`;
-        row.score.textContent = `${name}  ${t.score}分 / ${t.kills}杀`;
-        row.status.textContent = !t.alive ? '重生中…' : t.shieldTicks > 0 ? '护盾' : '存活';
+        row.score.textContent = `${name}  ${t.score}分 / ${t.kills}杀 / ★${t.level}`;
+        row.status.textContent = !t.alive ? '重生中…' : t.frozenTicks > 0 ? '冻结' : t.shieldTicks > 0 ? '护盾' : '存活';
       });
       renderFeed(onlineTick);
     }
@@ -243,8 +274,8 @@ function renderOnline(): void {
 
 const keys = new KeyboardInput(() => { if (mode === 'single') startSingle(); });
 
-btnSingle.addEventListener('click', () => startSingle());
-btnOnline.addEventListener('click', () => goOnline());
+btnSingle.addEventListener('click', () => { audio.unlock(); startSingle(); });
+btnOnline.addEventListener('click', () => { audio.unlock(); goOnline(); });
 btnStart.addEventListener('click', () => net.send({ t: 'start' }));
 // 输入昵称时阻止游戏键位捕获（Space/方向键）
 nickInput.addEventListener('keydown', (e) => e.stopPropagation());
@@ -282,7 +313,15 @@ function frame(now: number): void {
   }
 
   if (mode === 'single') {
-    renderer.render(sim);
+    renderer.render({
+      tick: sim.tick,
+      bullets: sim.bullets,
+      tanks: sim.tanks,
+      terrainAt: (cx, cy) => sim.terrainAt(cx, cy),
+      base: sim.map.base,
+      baseAlive: sim.baseAlive,
+      powerups: sim.powerups,
+    });
     if (--hudCd <= 0) { updateSingleHud(); hudCd = 10; }
   } else if (mode === 'online') {
     renderOnline();

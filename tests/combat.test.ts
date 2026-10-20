@@ -136,11 +136,11 @@ describe('子弹互消与击杀计分（FR-T2、D1）', () => {
 
   it('三弹同 tick 重叠时全部抵消', () => {
     const sim = makeSim();
-    // 直接布置三发子弹，移动 4px 后两两重叠（空地，避开坦克与地形）
+    // 直接布置三发子弹，移动 4px 后两两重叠（空地，避开坦克与地形）；三方不同主
     sim.bullets.push(
-      { id: 1, ownerId: 0, dir: Dir.Up, x: 224, y: 68 },
-      { id: 2, ownerId: 1, dir: Dir.Down, x: 224, y: 56 },
-      { id: 3, ownerId: 0, dir: Dir.Left, x: 236, y: 64 },
+      { id: 1, ownerId: 0, dir: Dir.Up, x: 224, y: 68, level: 0 },
+      { id: 2, ownerId: 1, dir: Dir.Down, x: 224, y: 56, level: 0 },
+      { id: 3, ownerId: 2, dir: Dir.Left, x: 236, y: 64, level: 0 },
     );
     sim.step();
     expect(sim.bullets.length).toBe(0);

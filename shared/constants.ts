@@ -21,8 +21,20 @@ export const ROUND_TICKS_DEFAULT = 8 * 60 * TICK_RATE; // 默认 8 分钟
 
 // ---- 坦克 / 子弹（原版 60fps、208×208 下的值 ×2 折算到 416×416）----
 export const TANK_SPEED = 1.5;    // px/tick（原版 ≈0.75 px/帧）
-export const BULLET_SPEED = 4;    // px/tick（原版 ≈2 px/帧）
-export const MAX_BULLETS = 1;     // L0 同屏弹量（M3 引入等级后按等级表）
+export const BULLET_SPEED = 4;    // px/tick（原版 ≈2 px/帧，L0 基准值）
+export const MAX_BULLETS = 1;     // L0 同屏弹量（M3 起按等级表）
+
+// ---- 坦克等级（FR-T3/T4，D6；数值见参数对照表 §2）----
+export const MAX_LEVEL = 3;
+export const BULLET_SPEED_BY_LEVEL: readonly number[] = [4, 8, 8, 8]; // L1+ 快速子弹
+export const MAX_BULLETS_BY_LEVEL: readonly number[] = [1, 1, 2, 2];  // L2+ 双发
+
+// ---- 道具（FR-P1~P6）----
+export const POWERUP_INTERVAL_TICKS = 20 * TICK_RATE; // 定点刷新间隔 20s
+export const MAX_POWERUPS = 1;                        // 同时在场数量上限
+export const HELMET_TICKS = 10 * TICK_RATE;           // 头盔：10s 护盾
+export const FREEZE_TICKS = 8 * TICK_RATE;            // 定时器：冻结对手 8s
+export const SHOVEL_TICKS = 15 * TICK_RATE;           // 铁锹：基地钢墙 15s
 
 // ---- 生命周期 ----
 export const RESPAWN_TICKS = 2 * TICK_RATE;  // 被击毁 2 秒后重生

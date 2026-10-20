@@ -4,8 +4,8 @@ import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { TICK_RATE } from '../shared/constants';
-import type { MapDef } from '../shared/types';
 import type { S2CMessage } from '../shared/protocol';
+import { MAPS } from '../shared/maps';
 import { startTickLoop } from './gameLoop';
 import { Room, type Conn } from './room';
 
@@ -40,9 +40,8 @@ const server = createServer((req: IncomingMessage, res: ServerResponse): void =>
   }
 });
 
-// ---- 游戏房间 ----
-const mapDef = JSON.parse(readFileSync(join(ROOT, 'maps', 'map01.json'), 'utf-8')) as MapDef;
-const room = new Room(mapDef);
+// ---- 游戏房间（内置地图轮换） ----
+const room = new Room(MAPS);
 
 // ---- WebSocket：与 HTTP 共享端口，路径 /ws ----
 const wss = new WebSocketServer({ server, path: '/ws' });

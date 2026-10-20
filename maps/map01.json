@@ -12,12 +12,12 @@
     "......BBBB......BBBB......",
     "BB..WW....BBBBBB....WW..BB",
     "BB..WW....BBBBBB....WW..BB",
-    "....WW..BBBBTTBBBB..WW....",
-    "....WW..BBBBTTBBBB..WW....",
-    "..BB..BBBBTTTTTTBBBB..BB..",
-    "..BB..BBBBTTTTTTBBBB..BB..",
-    "........BBBBTTBBBB........",
-    "........BBBBTTBBBB........",
+    "....WW..BBBBBBBBBB..WW....",
+    "....WW..BBBBBBBBBB..WW....",
+    "..BB..BBBBBBTTBBBBBB..BB..",
+    "..BB..BBBBBBTTBBBBBB..BB..",
+    "........BBBBBBBBBB........",
+    "........BBBBBBBBBB........",
     "BB..WW....BBBBBB....WW..BB",
     "BB..WW....BBBBBB....WW..BB",
     "......BBBB......BBBB......",
@@ -30,9 +30,35 @@
     ".........................."
   ],
   "spawns": [
-    { "x": 4, "y": 24 },
-    { "x": 20, "y": 0 }
+    {
+      "x": 4,
+      "y": 24
+    },
+    {
+      "x": 20,
+      "y": 0
+    }
   ],
-  "base": null,
-  "powerupSpots": []
+  "base": {
+    "x": 12,
+    "y": 12
+  },
+  "powerupSpots": [
+    {
+      "x": 4,
+      "y": 4
+    },
+    {
+      "x": 20,
+      "y": 4
+    },
+    {
+      "x": 4,
+      "y": 20
+    },
+    {
+      "x": 20,
+      "y": 20
+    }
+  ]
 }

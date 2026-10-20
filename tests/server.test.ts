@@ -23,7 +23,7 @@ class FakeConn implements Conn {
 }
 
 function makeRoom(opts?: ConstructorParameters<typeof Room>[1]): { room: Room; a: FakeConn; b: FakeConn } {
-  const room = new Room(makeMap([], TWO_SPAWNS), opts);
+  const room = new Room([makeMap([], TWO_SPAWNS)], opts);
   const a = new FakeConn(1);
   const b = new FakeConn(2);
   room.addConnection(a);
@@ -50,7 +50,7 @@ describe('L2 集成：join 与大厅（IT-01）', () => {
   });
 
   it('房间满时拒绝加入并回 error', () => {
-    const room = new Room(makeMap([], TWO_SPAWNS));
+    const room = new Room([makeMap([], TWO_SPAWNS)]);
     const a = new FakeConn(1);
     const b = new FakeConn(2);
     const c = new FakeConn(3);
@@ -92,7 +92,7 @@ describe('L2 集成：开局与快照同步（IT-02/03）', () => {
   });
 
   it('人数不足时 AI 补位并参与行动', () => {
-    const room = new Room(makeMap([], TWO_SPAWNS), { seed: 7 });
+    const room = new Room([makeMap([], TWO_SPAWNS)], { seed: 7 });
     const a = new FakeConn(1);
     room.addConnection(a);
     room.handleMessage(1, { t: 'join', name: 'Solo' });

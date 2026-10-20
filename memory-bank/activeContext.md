@@ -1,7 +1,7 @@
 # 当前工作上下文（Active Context）
 
 ## 当前阶段
-**M2 联机打通完成（2026-10-19）**：41/41 测试通过。M1（单机核心）与 M2（WebSocket 服务器 / 房间状态机 / 快照同步 / AI 补位）完成。下一步 M3 内容完整。
+**M3 内容完整完成（2026-10-19）**：56/56 测试通过。M1~M3 完成（单机核心 / 联机打通 / 四级坦克+道具+基地+音频+6 地图）。下一步 M4 多人体验。
 
 ## 已确认的关键决策
 1. 核心玩法：**PvP 死亡竞技**（用户选定）。
@@ -43,7 +43,17 @@
   - 测试：tests/server.test.ts 9 个 L2 集成用例（join/lobby、满员拒绝、非房主不可开局、快照下发与输入驱动、AI 补位、限时结算回 Waiting、断线、非法消息、快照契约），总计 41/41
   - 冒烟验证：HTTP 200、WS join→welcome+lobbyState、双人开局→快照 ~60Hz 下发（12s 内 539 帧）
   - **M2 遗留到 M4**：断线 AI 托管/重连接管（FR-N4）、聊天（D4）、房间配置（FR-N3）、8 坦克上限、输入限流（NFR-6 完整版）
-- [ ] **M3 内容完整**（下一里程碑）：四级坦克、六种道具、中立基地机制、音频、6 张地图
+- [x] **M3 内容完整**（2026-10-19，当前阶段）：
+  - **等级系统（FR-T3/T4/D6）**：`BULLET_SPEED_BY_LEVEL=[4,8,8,8]`、`MAX_BULLETS_BY_LEVEL=[1,1,2,2]`、L3 破钢（destroySteel）+ 砖墙整大格（destroyBrickStrip 深度扩展）、killTank 降 1 级；同主子弹不互消（L2 双发前提）
+  - **六种道具（FR-P1~P6）**：PowerupType（Star/Helmet/Timer/Bomb/Shovel/Tank）；powerupSpots 定点刷新（20s 间隔、在场 ≤1、被占跳过）；满级星星 +100；定时器冻结 8s（不可移动/开火/拾取）；炸弹全图击毁按归属计分；铁锹基地环变钢 15s（shovelBackup 首次激活备份到期恢复，防重复备份污染）
+  - **中立基地（FR-M6/D2）**：地图 base 字段（32×32 大格对齐，loader 校验）；bulletVsBase +500 分不结束回合；canOccupy 阻挡坦克；摧毁后可通行
+  - **协议/快照扩展**：SnapshotTank + level/frozenTicks；Snapshot + powerups/baseAlive；S2C 新增 `start{map}`；房间地图按局轮换（maps 数组 + mapIndex）
+  - **客户端**：client/audio.ts（Web Audio 合成 5 类音效，按钮点击 unlock）；renderer 基地/道具/冻结覆盖绘制；HUD 等级 ★n 与冻结状态；单机随机 6 图、联机按 start.map 重建 TerrainView
+  - **地图**：scripts/gen-maps.cjs（13×13 大格模式 ×2 展开 + 点位合法性校验）生成 map02~06 + 修补 map01 基地环（6×6 砖圈完整包围）
+  - **测试**：tests/m3.test.ts 15 例（升级链/满级星星/双发/弹速/L3 破钢整格/降级/头盔/定时器/炸弹/坦克/铁锹恢复/基地摧毁计分/实体障碍与通行/6 图注册表），总计 56/56
+  - **冒烟**：HTTP 200 + 单人开局 + start 消息地图名 + 快照含 baseAlive/powerups（240 帧）
+  - **M3 遗留到 M4**：AI 抢道具（困难档）、闪红 AI 掉落道具、旋律类音频（开场/结算/BGM）
+- [ ] **M4 多人体验**（下一里程碑）：8 坦克房间、AI 3 档难度、大厅聊天、键位自定义、断线托管（FR-N4）
 
 ## M1 实现要点（后续开发需遵守）
 1. **输入统一为位掩码**：`INPUT_UP=1/DOWN=2/LEFT=4/RIGHT=8/FIRE=16`（不是 `1<<Dir`！），真人与 AI 都走 `sim.setInput(id, mask)`。

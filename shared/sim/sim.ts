@@ -1,19 +1,28 @@
 import {
   BULLET_SIZE,
-  BULLET_SPEED,
+  BULLET_SPEED_BY_LEVEL,
   CELL,
   Dir,
   DIR_VEC,
   FIELD,
+  FREEZE_TICKS,
   GRID,
+  HELMET_TICKS,
   ICE_SLIDE_TICKS,
   INPUT_FIRE,
   isHorizontal,
-  MAX_BULLETS,
+  MAX_BULLETS_BY_LEVEL,
+  MAX_LEVEL,
+  MAX_POWERUPS,
+  POWERUP_INTERVAL_TICKS,
   RESPAWN_TICKS,
+  SCORE_BASE,
   SCORE_CAP_DEFAULT,
   SCORE_KILL,
+  SCORE_STAR_MAX,
+  SCORE_TANK_POWERUP,
   SHIELD_TICKS,
+  SHOVEL_TICKS,
   TANK_SIZE,
   TANK_SPEED,
   clamp,
@@ -23,21 +32,25 @@ import {
 import { cellsOfRect, loadMap, terrainAt } from '../map/loader';
 import { mulberry32 } from '../rng';
 import {
+  PowerupType,
   TerrainType,
   type BulletState,
   type LoadedMap,
   type MapDef,
   type PlayerDef,
+  type PowerupState,
   type SimEvent,
   type TankState,
 } from '../types';
 
 export interface SimOptions {
   seed?: number;
-  /** 积分上限（0 = 无上限，无限时） */
+  /** 积分上限（0 = 无上限） */
   scoreCap?: number;
   /** 回合时长 tick（0 = 无限时） */
   timeTicks?: number;
+  /** 道具刷新间隔 tick（测试可缩短） */
+  powerupInterval?: number;
 }
 
 export interface Tank extends TankState {
@@ -47,16 +60,25 @@ export interface Tank extends TankState {
 
 export interface Bullet extends BulletState {}
 
+export interface Powerup extends PowerupState {}
+
 export const PALETTE = ['#e8c838', '#d84040', '#58b858', '#5878d8', '#c868d8', '#d88838', '#40c8b8', '#c8c8c8'];
+
+function rectsOverlap(ax: number, ay: number, aw: number, ah: number, bx: number, by: number, bw: number, bh: number): boolean {
+  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+}
 
 /**
  * 战斗模拟器（服务器权威逻辑，单机模式在客户端本地跑同一份代码）。
  * 固定步长：外部每 tick 调用一次 step()（1/60s 虚拟时间）。
+ * M3：坦克等级 0~3、六种道具、中立基地。
  */
 export class BattleSim {
   readonly map: LoadedMap;
   readonly tanks: Tank[] = [];
   bullets: Bullet[] = [];
+  powerups: Powerup[] = [];
+  baseAlive: boolean;
   tick = 0;
   gameOver = false;
   winnerId: number | null = null;
@@ -65,14 +87,22 @@ export class BattleSim {
   private readonly events: SimEvent[] = [];
   private readonly rng: () => number;
   private readonly scoreCap: number;
+  private readonly powerupInterval: number;
   private ticksLeft: number;
   private nextBulletId = 1;
+  private nextPowerupId = 1;
+  private powerupCd: number;
+  private shovelTicks = 0;
+  private shovelBackup: [number, number, TerrainType][] | null = null;
 
   constructor(mapDef: MapDef, players: PlayerDef[], opts: SimOptions = {}) {
     this.map = loadMap(mapDef);
     this.rng = mulberry32(opts.seed ?? 0x2f6e2b1);
     this.scoreCap = opts.scoreCap ?? SCORE_CAP_DEFAULT;
     this.ticksLeft = opts.timeTicks ?? 0;
+    this.powerupInterval = opts.powerupInterval ?? POWERUP_INTERVAL_TICKS;
+    this.powerupCd = this.powerupInterval;
+    this.baseAlive = this.map.base !== null;
 
     players.forEach((p, i) => {
       const spawn = this.map.spawns[i % this.map.spawns.length]!;
@@ -88,6 +118,8 @@ export class BattleSim {
         alive: true,
         shieldTicks: SHIELD_TICKS,
         respawnTicks: 0,
+        level: 0,
+        frozenTicks: 0,
         score: 0,
         kills: 0,
         deaths: 0,
@@ -121,6 +153,7 @@ export class BattleSim {
 
     for (const t of this.tanks) this.stepTank(t);
     this.stepBullets();
+    this.stepPowerups();
 
     // 胜负判定（D1：先达积分上限者胜；限时耗尽按积分最高者胜）
     if (this.scoreCap > 0) {
@@ -146,6 +179,13 @@ export class BattleSim {
       return;
     }
     if (t.shieldTicks > 0) t.shieldTicks--;
+    if (t.frozenTicks > 0) {
+      // 定时器冻结（FR-P3）：不可移动 / 开火，滑行中断
+      t.frozenTicks--;
+      t.slideTicks = 0;
+      t.moving = false;
+      return;
+    }
 
     const mask = this.inputs[t.id] ?? 0;
     const wantDir = maskDir(mask);
@@ -176,10 +216,10 @@ export class BattleSim {
       t.moving = false;
     }
 
-    // 射击（同屏弹量受限，FR-T2）
+    // 射击（同屏弹量按等级，FR-T2/T4）
     if (mask & INPUT_FIRE) {
       const myBullets = this.bullets.reduce((n, b) => n + (b.ownerId === t.id ? 1 : 0), 0);
-      if (myBullets < MAX_BULLETS) this.spawnBullet(t);
+      if (myBullets < MAX_BULLETS_BY_LEVEL[t.level]!) this.spawnBullet(t);
     }
   }
 
@@ -196,11 +236,15 @@ export class BattleSim {
     }
   }
 
-  /** 坦克 AABB 能否占据 (x,y)：受砖/钢/水阻挡（树/冰不阻挡），坦克互为障碍 */
+  /** 坦克 AABB 能否占据 (x,y)：受砖/钢/水/基地阻挡（树/冰不阻挡），坦克互为障碍 */
   private canOccupy(self: Tank, x: number, y: number): boolean {
     for (const [cx, cy] of cellsOfRect(x, y, TANK_SIZE, TANK_SIZE)) {
       const tt = terrainAt(this.map, cx, cy);
       if (tt === TerrainType.Brick || tt === TerrainType.Steel || tt === TerrainType.Water) return false;
+    }
+    if (this.baseAlive && this.map.base &&
+        rectsOverlap(x, y, TANK_SIZE, TANK_SIZE, this.map.base.x, this.map.base.y, TANK_SIZE, TANK_SIZE)) {
+      return false; // 基地为实体障碍
     }
     for (const o of this.tanks) {
       if (o === self || !o.alive) continue;
@@ -224,6 +268,7 @@ export class BattleSim {
     t.alive = true;
     t.moving = false;
     t.shieldTicks = SHIELD_TICKS;
+    t.frozenTicks = 0;
     t.slideTicks = 0;
   }
 
@@ -260,29 +305,33 @@ export class BattleSim {
       id: this.nextBulletId++,
       ownerId: t.id,
       dir: t.dir,
+      level: t.level,
       x: cx - BULLET_SIZE / 2 + v.x * (TANK_SIZE / 2),
       y: cy - BULLET_SIZE / 2 + v.y * (TANK_SIZE / 2),
     });
+    this.events.push({ type: 'shoot', x: cx, y: cy });
   }
 
   private stepBullets(): void {
     const alive: Bullet[] = [];
     for (const b of this.bullets) {
       const v = DIR_VEC[b.dir]!;
-      b.x += v.x * BULLET_SPEED;
-      b.y += v.y * BULLET_SPEED;
+      const speed = BULLET_SPEED_BY_LEVEL[b.level]!;
+      b.x += v.x * speed;
+      b.y += v.y * speed;
 
       // 出界
       if (b.x <= -BULLET_SIZE || b.y <= -BULLET_SIZE || b.x >= FIELD || b.y >= FIELD) {
         this.events.push({ type: 'explosion', x: clamp(b.x + BULLET_SIZE / 2, 0, FIELD), y: clamp(b.y + BULLET_SIZE / 2, 0, FIELD), big: false });
         continue;
       }
+      if (this.bulletVsBase(b)) continue;
       if (this.bulletVsTerrain(b)) continue;
       if (this.bulletVsTank(b)) continue;
       alive.push(b);
     }
 
-    // 子弹互消（FR-T2，含擦边；标记式：同 tick 内一弹与多弹重叠时全部抵消）
+    // 子弹互消（FR-T2，含擦边；同主 bullets 不互消 —— L2 双发的前提）
     const dead = new Set<number>();
     for (let i = 0; i < alive.length; i++) {
       if (dead.has(i)) continue;
@@ -290,6 +339,7 @@ export class BattleSim {
       for (let j = i + 1; j < alive.length; j++) {
         if (dead.has(j)) continue;
         const c = alive[j]!;
+        if (a.ownerId === c.ownerId) continue;
         if (a.x <= c.x + BULLET_SIZE && a.x + BULLET_SIZE >= c.x &&
             a.y <= c.y + BULLET_SIZE && a.y + BULLET_SIZE >= c.y) {
           dead.add(i);
@@ -301,7 +351,9 @@ export class BattleSim {
     this.bullets = alive.filter((_, idx) => !dead.has(idx));
   }
 
-  /** 子弹 vs 地形：砖按小格损毁（32px 宽条带，近似原版 2 小格宽），钢挡弹 */
+  // ---------------------------------------------------------------- 地形 / 基地
+
+  /** 子弹 vs 地形：砖按小格损毁（32px 宽条带；L3 整大格），钢挡弹（L3 可毁） */
   private bulletVsTerrain(b: Bullet): boolean {
     let hitBrick = false;
     let hitSteel = false;
@@ -313,6 +365,7 @@ export class BattleSim {
     if (!hitBrick && !hitSteel) return false;
 
     if (hitBrick) this.destroyBrickStrip(b);
+    if (b.level >= MAX_LEVEL && hitSteel) this.destroySteel(b);
     this.events.push({
       type: 'explosion',
       x: clamp(b.x + BULLET_SIZE / 2, 0, FIELD),
@@ -322,13 +375,18 @@ export class BattleSim {
     return true;
   }
 
-  /** 砖墙损毁条带：垂直于飞行方向 32px 宽 × 子弹深度（M1 近似，见参数对照表） */
+  /** 砖墙损毁条带：垂直于飞行方向 32px 宽；L3 深度扩展为整大格（FR-M1） */
   private destroyBrickStrip(b: Bullet): void {
     const vertical = b.dir === Dir.Up || b.dir === Dir.Down;
-    const rx = vertical ? b.x + BULLET_SIZE / 2 - CELL : b.x;
-    const ry = vertical ? b.y : b.y + BULLET_SIZE / 2 - CELL;
-    const rw = vertical ? TANK_SIZE : BULLET_SIZE;
-    const rh = vertical ? BULLET_SIZE : TANK_SIZE;
+    let rx = vertical ? b.x + BULLET_SIZE / 2 - CELL : b.x;
+    let ry = vertical ? b.y : b.y + BULLET_SIZE / 2 - CELL;
+    let rw = vertical ? TANK_SIZE : BULLET_SIZE;
+    let rh = vertical ? BULLET_SIZE : TANK_SIZE;
+    if (b.level >= MAX_LEVEL) {
+      // L3：深度扩展为完整大格（2×2 小格）
+      if (vertical) { ry = Math.floor(ry / TANK_SIZE) * TANK_SIZE; rh = TANK_SIZE; }
+      else { rx = Math.floor(rx / TANK_SIZE) * TANK_SIZE; rw = TANK_SIZE; }
+    }
 
     for (const [cx, cy] of cellsOfRect(rx, ry, rw, rh)) {
       if (terrainAt(this.map, cx, cy) === TerrainType.Brick) {
@@ -338,7 +396,31 @@ export class BattleSim {
     }
   }
 
-  /** 子弹 vs 坦克：命中护盾坦克弹消失；命中普通坦克击毁（FR-T5/T6，击杀者 +100 分） */
+  /** L3 破钢：摧毁子弹接触的钢墙小格（FR-M2） */
+  private destroySteel(b: Bullet): void {
+    for (const [cx, cy] of cellsOfRect(b.x, b.y, BULLET_SIZE, BULLET_SIZE)) {
+      if (terrainAt(this.map, cx, cy) === TerrainType.Steel) {
+        this.map.terrain[cy * this.map.size + cx] = TerrainType.Empty;
+        this.events.push({ type: 'brickBreak', x: cx, y: cy });
+      }
+    }
+  }
+
+  /** 子弹 vs 基地：摧毁 +500 分，回合不结束（FR-M6/D2） */
+  private bulletVsBase(b: Bullet): boolean {
+    if (!this.baseAlive || !this.map.base) return false;
+    const base = this.map.base;
+    if (!rectsOverlap(b.x, b.y, BULLET_SIZE, BULLET_SIZE, base.x, base.y, TANK_SIZE, TANK_SIZE)) return false;
+
+    this.baseAlive = false;
+    const killer = this.tankById(b.ownerId);
+    if (killer) killer.score += SCORE_BASE;
+    this.events.push({ type: 'explosion', x: base.x + TANK_SIZE / 2, y: base.y + TANK_SIZE / 2, big: true });
+    this.events.push({ type: 'baseDestroyed', byId: b.ownerId, x: base.x + TANK_SIZE / 2, y: base.y + TANK_SIZE / 2 });
+    return true;
+  }
+
+  /** 子弹 vs 坦克：命中护盾/冻结坦克弹消失；命中普通坦克击毁（击杀者 +100 分，D6 降 1 级） */
   private bulletVsTank(b: Bullet): boolean {
     for (const t of this.tanks) {
       if (!t.alive || t.id === b.ownerId) continue;
@@ -351,6 +433,90 @@ export class BattleSim {
     return false;
   }
 
+  // ---------------------------------------------------------------- 道具
+
+  private stepPowerups(): void {
+    // 铁锹到期恢复原状（FR-P5）
+    if (this.shovelTicks > 0 && --this.shovelTicks === 0 && this.shovelBackup) {
+      for (const [cx, cy, tt] of this.shovelBackup) {
+        this.map.terrain[cy * this.map.size + cx] = tt;
+      }
+      this.shovelBackup = null;
+    }
+
+    // 定点刷新：同时在场 ≤ MAX_POWERUPS，地图需配置点位
+    if (this.powerups.length < MAX_POWERUPS && this.map.powerupSpots.length > 0 && --this.powerupCd <= 0) {
+      this.powerupCd = this.powerupInterval;
+      const spot = this.map.powerupSpots[Math.floor(this.rng() * this.map.powerupSpots.length)]!;
+      const kinds = Object.values(PowerupType).filter((v): v is PowerupType => typeof v === 'number');
+      const kind = kinds[Math.floor(this.rng() * kinds.length)]!;
+      const occupied = this.tanks.some((t) => t.alive && rectsOverlap(t.x, t.y, TANK_SIZE, TANK_SIZE, spot.x, spot.y, TANK_SIZE, TANK_SIZE));
+      if (!occupied) {
+        this.powerups.push({ id: this.nextPowerupId++, type: kind, x: spot.x, y: spot.y });
+      }
+    }
+
+    // 拾取（AABB 重叠；冻结坦克不能拾取）
+    for (const t of this.tanks) {
+      if (!t.alive || t.frozenTicks > 0) continue;
+      for (let i = this.powerups.length - 1; i >= 0; i--) {
+        const p = this.powerups[i]!;
+        if (rectsOverlap(t.x, t.y, TANK_SIZE, TANK_SIZE, p.x, p.y, TANK_SIZE, TANK_SIZE)) {
+          this.powerups.splice(i, 1);
+          this.applyPowerup(t, p.type, p.x + TANK_SIZE / 2, p.y + TANK_SIZE / 2);
+        }
+      }
+    }
+  }
+
+  private applyPowerup(t: Tank, kind: PowerupType, x: number, y: number): void {
+    switch (kind) {
+      case PowerupType.Star: // FR-P1
+        if (t.level < MAX_LEVEL) t.level++;
+        else t.score += SCORE_STAR_MAX; // 满级星星改 +100 分
+        break;
+      case PowerupType.Helmet: // FR-P2
+        t.shieldTicks = HELMET_TICKS;
+        break;
+      case PowerupType.Timer: // FR-P3：冻结所有对手
+        for (const o of this.tanks) {
+          if (o.id !== t.id && o.alive) o.frozenTicks = FREEZE_TICKS;
+        }
+        break;
+      case PowerupType.Bomb: // FR-P4：全图对手击毁，按击杀归属计分
+        for (const o of [...this.tanks]) {
+          if (o.id !== t.id && o.alive) this.killTank(o, t.id);
+        }
+        break;
+      case PowerupType.Shovel: // FR-P5
+        this.activateShovel();
+        break;
+      case PowerupType.Tank: // FR-P6
+        t.score += SCORE_TANK_POWERUP;
+        break;
+    }
+    this.events.push({ type: 'powerupPickup', tankId: t.id, kind, x, y });
+  }
+
+  /** 铁锹：基地周围一圈变钢墙，到期恢复原状（首次激活时备份） */
+  private activateShovel(): void {
+    const base = this.map.base;
+    if (!base) return;
+    if (this.shovelTicks <= 0) {
+      const cells: [number, number, TerrainType][] = [];
+      const baseCells = new Set(cellsOfRect(base.x, base.y, TANK_SIZE, TANK_SIZE).map(([x, y]) => `${x},${y}`));
+      for (const [cx, cy] of cellsOfRect(base.x - CELL, base.y - CELL, TANK_SIZE + 2 * CELL, TANK_SIZE + 2 * CELL)) {
+        if (baseCells.has(`${cx},${cy}`)) continue;
+        cells.push([cx, cy, terrainAt(this.map, cx, cy)]);
+        this.map.terrain[cy * this.map.size + cx] = TerrainType.Steel;
+      }
+      this.shovelBackup = cells;
+    }
+    this.shovelTicks = SHOVEL_TICKS;
+  }
+
+  // ---------------------------------------------------------------- 击杀 / 结算
+
   /** 按 id 查找坦克（不依赖 id === 数组下标的隐式约定，M2 房间玩家进出时安全） */
   private tankById(id: number): Tank | undefined {
     return this.tanks.find((t) => t.id === id);
@@ -362,6 +528,7 @@ export class BattleSim {
     victim.slideTicks = 0;
     victim.respawnTicks = RESPAWN_TICKS;
     victim.deaths++;
+    victim.level = Math.max(0, victim.level - 1); // D6：被击毁降 1 级
 
     const killer = this.tankById(killerId);
     if (killer) {

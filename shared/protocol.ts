@@ -23,6 +23,8 @@ export interface SnapshotTank {
   alive: boolean;
   shieldTicks: number;
   respawnTicks: number;
+  level: number;
+  frozenTicks: number;
   score: number;
   kills: number;
 }
@@ -35,10 +37,19 @@ export interface SnapshotBullet {
   y: number;
 }
 
+export interface SnapshotPowerup {
+  id: number;
+  type: number;
+  x: number;
+  y: number;
+}
+
 export interface Snapshot {
   tick: number;
   tanks: SnapshotTank[];
   bullets: SnapshotBullet[];
+  powerups: SnapshotPowerup[];
+  baseAlive: boolean;
 }
 
 // ---- C→S ----
@@ -50,7 +61,8 @@ export type C2SMessage =
 // ---- S→C ----
 export type S2CMessage =
   | { t: 'welcome'; connId: number }
+  | { t: 'start'; map: string }
   | { t: 'lobbyState'; phase: RoomPhase; ownerConnId: number; secondsLeft: number | null; players: LobbyPlayer[] }
-  | { t: 'snapshot'; tick: number; tanks: SnapshotTank[]; bullets: SnapshotBullet[] }
+  | { t: 'snapshot'; tick: number; tanks: SnapshotTank[]; bullets: SnapshotBullet[]; powerups: SnapshotPowerup[]; baseAlive: boolean }
   | { t: 'event'; event: SimEvent }
   | { t: 'error'; message: string };

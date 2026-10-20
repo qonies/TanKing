@@ -43,7 +43,7 @@ export class SnapshotBuffer {
       if (!p || Math.abs(t.x - p.x) > 64 || Math.abs(t.y - p.y) > 64) return t;
       return { ...t, x: p.x + (t.x - p.x) * alpha, y: p.y + (t.y - p.y) * alpha };
     });
-    return { tick: rt, tanks, bullets: s1.bullets };
+    return { tick: rt, tanks, bullets: s1.bullets, powerups: s1.powerups, baseAlive: s1.baseAlive };
   }
 }
 

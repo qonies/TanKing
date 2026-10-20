@@ -1,4 +1,4 @@
-import { GRID, CELL } from '../constants';
+import { GRID, CELL, TANK_SIZE, FIELD } from '../constants';
 import { TerrainType, type MapDef, type LoadedMap, type PointDef } from '../types';
 
 const CHAR_MAP: Record<string, TerrainType> = {
@@ -45,7 +45,19 @@ export function loadMap(def: MapDef): LoadedMap {
   }
   const spawns = def.spawns.map((p: PointDef) => ({ x: p.x * CELL, y: p.y * CELL }));
 
-  return { name: def.name, size: GRID, terrain, spawns };
+  // 基地 / 道具点：小格坐标 × CELL 折算像素（占 32×32，需大格对齐）
+  const base = def.base ? { x: def.base.x * CELL, y: def.base.y * CELL } : null;
+  if (base && (base.x % TANK_SIZE !== 0 || base.y % TANK_SIZE !== 0)) {
+    throw new Error(`地图 "${def.name}" 基地点位未按大格对齐`);
+  }
+  const powerupSpots = (def.powerupSpots ?? []).map((p: PointDef) => ({ x: p.x * CELL, y: p.y * CELL }));
+  for (const s of powerupSpots) {
+    if (s.x % TANK_SIZE !== 0 || s.y % TANK_SIZE !== 0 || s.x < 0 || s.y < 0 || s.x > FIELD - TANK_SIZE || s.y > FIELD - TANK_SIZE) {
+      throw new Error(`地图 "${def.name}" 道具点位非法`);
+    }
+  }
+
+  return { name: def.name, size: GRID, terrain, spawns, base, powerupSpots };
 }
 
 /** 读取小格地形 */

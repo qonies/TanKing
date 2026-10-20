@@ -19,6 +19,8 @@ export interface RoomOptions {
   timeTicks?: number;
   /** 总坦克数（真人 + AI 合计）；M2 默认 2 */
   maxTanks?: number;
+  /** 道具刷新间隔 tick（测试可缩短） */
+  powerupInterval?: number;
 }
 
 interface Member {
@@ -36,7 +38,7 @@ const DEFAULT_SEED = 20261019;
 /**
  * 房间状态机（技术路线 §1.1-4）：Waiting → Countdown → Playing → RoundEnd → Waiting…
  * tick 由外部循环（gameLoop）驱动，step() 每次推进一帧。
- * 先加入者为房主；开局时真人优先、AI 补位至总坦克数上限。
+ * 先加入者为房主；开局时真人优先、AI 补位至总坦克数上限；地图按局轮换。
  */
 export class Room {
   phase: RoomPhase = 'waiting';
@@ -45,9 +47,10 @@ export class Room {
   private sim: BattleSim | null = null;
   private bots: BotController[] = [];
   private phaseTicks = 0;
+  private mapIndex = 0;
 
   constructor(
-    private readonly mapDef: MapDef,
+    private readonly maps: MapDef[],
     private readonly opts: RoomOptions = {},
   ) {}
 
@@ -140,6 +143,8 @@ export class Room {
     if (connId !== this.ownerConnId() || this.members.size === 0) return;
 
     const seed = this.opts.seed ?? DEFAULT_SEED;
+    const mapDef = this.maps[this.mapIndex % this.maps.length]!;
+    this.mapIndex++;
     const humans = [...this.members.values()].sort((a, b) => a.connId - b.connId);
     const playerDefs: PlayerDef[] = humans.map((m) => ({ name: m.name, isBot: false, color: m.color }));
     while (playerDefs.length < this.maxTanks) {
@@ -147,10 +152,11 @@ export class Room {
       playerDefs.push({ name: `Bot-${i}`, isBot: true, color: PALETTE[i % PALETTE.length]! });
     }
 
-    this.sim = new BattleSim(this.mapDef, playerDefs, {
+    this.sim = new BattleSim(mapDef, playerDefs, {
       seed,
       scoreCap: this.opts.scoreCap ?? SCORE_CAP_DEFAULT,
       timeTicks: this.opts.timeTicks ?? ROUND_TICKS_DEFAULT,
+      powerupInterval: this.opts.powerupInterval,
     });
     this.bots = [];
     humans.forEach((m, i) => { m.tankId = i; });
@@ -159,6 +165,7 @@ export class Room {
     }
     this.phase = 'countdown';
     this.phaseTicks = COUNTDOWN_TICKS;
+    this.broadcast({ t: 'start', map: mapDef.name });
     this.broadcastLobby();
   }
 
@@ -200,9 +207,12 @@ export class Room {
       tick: sim.tick,
       tanks: sim.tanks.map((t) => ({
         id: t.id, x: t.x, y: t.y, dir: t.dir, moving: t.moving, alive: t.alive,
-        shieldTicks: t.shieldTicks, respawnTicks: t.respawnTicks, score: t.score, kills: t.kills,
+        shieldTicks: t.shieldTicks, respawnTicks: t.respawnTicks, level: t.level, frozenTicks: t.frozenTicks,
+        score: t.score, kills: t.kills,
       })),
       bullets: sim.bullets.map((b) => ({ id: b.id, ownerId: b.ownerId, dir: b.dir, x: b.x, y: b.y })),
+      powerups: sim.powerups.map((p) => ({ id: p.id, type: p.type, x: p.x, y: p.y })),
+      baseAlive: sim.baseAlive,
     });
   }
 }
