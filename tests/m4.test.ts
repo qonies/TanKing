@@ -71,19 +71,25 @@ describe('M4 修复：对局中禁止新玩家加入（防幽灵玩家）', () =
 
 describe('M4：断线托管与重连接管（FR-N4）', () => {
   it('断线成员 60s 内同名重连可接管原坦克', () => {
-    const { room } = joinedRoom();
+    const { room, b } = joinedRoom();
     room.handleMessage(1, { t: 'start' });
     for (let i = 0; i < 3 * TICK_RATE; i++) room.step();
     expect(room.phase).toBe('playing');
 
     const obs = new FakeConn(5);
     room.addConnection(obs);
-    room.removeConnection(1); // 房主断线 → AI 托管（会广播 lobbyState 给包括 obs 在内的所有连接）
+    room.removeConnection(1); // 房主断线 → AI 托管
     expect(room.ownerConnId()).toBe(2); // Bob 仍在线，成为房主
     for (let i = 0; i < 120; i++) room.step(); // 托管期间坦克仍被驱动
-    const hosted = obs.snapshots[obs.snapshots.length - 1]!.tanks.find((t) => t.id === 0)!;
+    const hosted = b.snapshots[b.snapshots.length - 1]!.tanks.find((t) => t.id === 0)!;
     expect(hosted.x !== 64 || hosted.y !== 384).toBe(true); // AI 在驱动该坦克
-    expect(obs.last('lobbyState')!.players.find((p) => p.name === 'Alice' && !p.isBot)!.online).toBe(false);
+    // P2 修复：托管成员合并为单条「托管」记录；未加入的连接不再接收广播
+    const lobbyAfterDisconnect = b.last('lobbyState')!;
+    const aliceRow = lobbyAfterDisconnect.players.find((p) => p.name === 'Alice')!;
+    expect(aliceRow.isBot).toBe(true);
+    expect(aliceRow.online).toBe(false);
+    expect(lobbyAfterDisconnect.players.filter((p) => p.name === 'Alice').length).toBe(1);
+    expect(obs.sent.length).toBe(0);
 
     const a2 = new FakeConn(9);
     room.addConnection(a2);
@@ -96,7 +102,7 @@ describe('M4：断线托管与重连接管（FR-N4）', () => {
     expect(room.ownerConnId()).toBe(2); // 房主仍是先加入的 Bob
 
     // 接管后真人输入恢复驱动（向左）
-    const xBefore = obs.snapshots[obs.snapshots.length - 1]!.tanks.find((t) => t.id === 0)!.x;
+    const xBefore = b.snapshots[b.snapshots.length - 1]!.tanks.find((t) => t.id === 0)!.x;
     room.handleMessage(9, { t: 'input', mask: 4 }); // 4 = INPUT_LEFT
     for (let i = 0; i < 10; i++) room.step();
     const xAfter = a2.snapshots[a2.snapshots.length - 1]!.tanks.find((t) => t.id === 0)!.x;

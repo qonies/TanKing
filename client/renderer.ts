@@ -6,7 +6,8 @@ import {
   GRID,
   TANK_SIZE,
 } from '../shared/constants';
-import { PowerupType, TerrainType, type SimEvent } from '../shared/types';
+import { PowerupType, TerrainType, type MapDef, type SimEvent } from '../shared/types';
+import { loadMap } from '../shared/map/loader';
 
 interface Fx { x: number; y: number; big: boolean; t: number }
 
@@ -19,6 +20,8 @@ export interface RenderTank {
   shieldTicks: number;
   frozenTicks: number;
   color: string;
+  /** 闪红坦克（M5）：与普通颜色交替闪烁渲染 */
+  bonus?: boolean;
 }
 
 export interface RenderPowerup {
@@ -96,7 +99,9 @@ export class Renderer {
     }
     for (const t of view.tanks) {
       if (!t.alive) continue;
-      this.drawTank(t.x, t.y, t.dir, t.color);
+      // 闪红坦克（M5）：红色与本体色交替闪烁（原版掉落道具坦克的视觉提示）
+      const color = t.bonus && view.tick % 16 < 8 ? '#f05050' : t.color;
+      this.drawTank(t.x, t.y, t.dir, color);
       if (t.shieldTicks > 0) this.drawShield(t.x, t.y, view.tick % 8 < 4);
       if (t.frozenTicks > 0) {
         ctx.fillStyle = 'rgba(140, 210, 255, 0.55)';
@@ -226,5 +231,25 @@ export class Renderer {
       }
     }
     this.fx = this.fx.filter((f) => ++f.t < (f.big ? 24 : 12));
+  }
+}
+
+/** 大厅地图预览（M5，FR-U2）：按 cellPx 像素/小格绘制地图初始地形与基地位置 */
+export function drawMapPreview(ctx: CanvasRenderingContext2D, mapDef: MapDef, cellPx: number): void {
+  const loaded = loadMap(mapDef);
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, loaded.size * cellPx, loaded.size * cellPx);
+  for (let cy = 0; cy < loaded.size; cy++) {
+    for (let cx = 0; cx < loaded.size; cx++) {
+      const tt = loaded.terrain[cy * loaded.size + cx]! as TerrainType;
+      if (tt === TerrainType.Empty) continue;
+      ctx.fillStyle = COLORS[tt];
+      ctx.fillRect(cx * cellPx, cy * cellPx, cellPx, cellPx);
+    }
+  }
+  if (loaded.base) {
+    ctx.fillStyle = '#caa53d';
+    ctx.fillRect(loaded.base.x / CELL * cellPx, loaded.base.y / CELL * cellPx, 2 * cellPx, 2 * cellPx);
   }
 }

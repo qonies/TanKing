@@ -41,6 +41,9 @@ export const RESPAWN_TICKS = 2 * TICK_RATE;  // 被击毁 2 秒后重生
 export const SHIELD_TICKS = 3 * TICK_RATE;   // 重生 3 秒无敌
 export const ICE_SLIDE_TICKS = 20;           // 冰面滑行时长（近似原版惯性手感）
 
+// ---- 闪红坦克（M5，FR-P 适配：低概率闪红 AI 被击毁时原地掉落道具）----
+export const BONUS_BOT_PROBABILITY = 0.2;
+
 // ---- 方向 ----
 export const Dir = { Up: 0, Right: 1, Down: 2, Left: 3 } as const;
 export type Dir = (typeof Dir)[keyof typeof Dir];

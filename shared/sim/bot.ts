@@ -15,6 +15,13 @@ import type { BattleSim, Tank } from './sim';
 
 export type BotDifficulty = 'easy' | 'normal' | 'hard';
 
+/**
+ * AI 速度档位（M5，参数对照表 §2）：
+ * 原版敌人坦克分基础（≈0.375 px/帧 @208）/ 快速（≈0.75 px/帧）两档，×2 折算即 0.75 / 1.5 px/tick @416。
+ * PvP 适配：按 AI 难度分档——easy 取原版基础档，normal 折中，hard 与真人同速。
+ */
+export const BOT_SPEED_BY_DIFFICULTY: Record<BotDifficulty, number> = { easy: 0.75, normal: 1.0, hard: 1.5 };
+
 const DECIDE_INTERVAL = 10;   // 每 10 tick 重新决策
 const STUCK_TICKS = 30;       // 卡墙判定
 const FIRE_COOLDOWN: Record<BotDifficulty, number> = { easy: 60, normal: 30, hard: 15 };

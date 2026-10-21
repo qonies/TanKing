@@ -56,6 +56,10 @@ export interface SimOptions {
 export interface Tank extends TankState {
   spawnIndex: number;
   slideTicks: number;
+  /** 坦克速度 px/tick（M5：真人 TANK_SPEED，AI 按难度档位） */
+  speed: number;
+  /** 闪红坦克（M5）：被击毁时原地掉落随机道具 */
+  bonus: boolean;
 }
 
 export interface Bullet extends BulletState {}
@@ -83,6 +87,11 @@ export class BattleSim {
   gameOver = false;
   winnerId: number | null = null;
 
+  /** 回合剩余 tick（0 = 无限时）；联机大厅下发布局剩余时间用 */
+  get remainingTicks(): number {
+    return this.ticksLeft;
+  }
+
   private readonly inputs: number[] = [];
   private readonly events: SimEvent[] = [];
   private readonly rng: () => number;
@@ -104,8 +113,24 @@ export class BattleSim {
     this.powerupCd = this.powerupInterval;
     this.baseAlive = this.map.base !== null;
 
+    // P0 修复：出生点唯一分配（地图 spawns 不足时按行优先扫描安全空位兜底），
+    // 避免 6/8 人开局时多辆坦克重叠在同一出生点而互相卡死
+    const usedSpawns = new Set<number>();
     players.forEach((p, i) => {
-      const spawn = this.map.spawns[i % this.map.spawns.length]!;
+      const n = this.map.spawns.length;
+      let spawnIndex = -1;
+      for (let k = 0; k < n; k++) {
+        const idx = (i + k) % n;
+        if (!usedSpawns.has(idx)) { spawnIndex = idx; break; }
+      }
+      let spawn: { x: number; y: number };
+      if (spawnIndex >= 0) {
+        spawn = this.map.spawns[spawnIndex]!;
+      } else {
+        spawn = this.findFreeSpot() ?? this.map.spawns[i % n]!;
+        spawnIndex = i % n; // 兜底时复用索引；重生 findSpawn 会再做安全位扫描
+      }
+      usedSpawns.add(spawnIndex);
       this.tanks.push({
         id: i,
         name: p.name,
@@ -123,8 +148,10 @@ export class BattleSim {
         score: 0,
         kills: 0,
         deaths: 0,
-        spawnIndex: i % this.map.spawns.length,
+        spawnIndex,
         slideTicks: 0,
+        speed: p.speed ?? TANK_SPEED,
+        bonus: p.bonus ?? false,
       });
       this.inputs.push(0);
     });
@@ -193,26 +220,20 @@ export class BattleSim {
     if (wantDir !== null) {
       t.slideTicks = 0;
       if (wantDir !== t.dir) {
-        // 转向：原移动轴吸附半格（原版手感关键，见 FR-T1）
-        if (isHorizontal(t.dir)) t.x = snap(t.x);
-        else t.y = snap(t.y);
+        // 转向：原移动轴吸附半格（原版手感关键，见 FR-T1）；吸附前做碰撞校验
+        this.trySnap(t);
         t.dir = wantDir;
       }
-      this.moveTank(t, TANK_SPEED);
+      this.moveTank(t, t.speed);
     } else if (t.slideTicks > 0) {
       // 冰面滑行惯性（FR-M5）
       t.slideTicks--;
-      this.moveTank(t, TANK_SPEED);
+      this.moveTank(t, t.speed);
       if (!t.moving) t.slideTicks = 0;
     } else {
-      // 松开：移动轴吸附半格；若在冰面上则开始滑行
-      if (isHorizontal(t.dir)) {
-        t.x = snap(t.x);
-        if (this.isOnIce(t)) t.slideTicks = ICE_SLIDE_TICKS;
-      } else {
-        t.y = snap(t.y);
-        if (this.isOnIce(t)) t.slideTicks = ICE_SLIDE_TICKS;
-      }
+      // 松开：移动轴吸附半格（带碰撞校验）；若在冰面上则开始滑行
+      this.trySnap(t);
+      if (this.isOnIce(t)) t.slideTicks = ICE_SLIDE_TICKS;
       t.moving = false;
     }
 
@@ -252,6 +273,40 @@ export class BattleSim {
           y < o.y + TANK_SIZE - 0.01 && y + TANK_SIZE > o.y + 0.01) return false;
     }
     return true;
+  }
+
+  /** 行优先扫描第一个可站位的 2×2 空位（出生点不足时的确定性兜底） */
+  private findFreeSpot(): { x: number; y: number } | null {
+    for (let cy = 0; cy <= this.map.size - 2; cy++) {
+      for (let cx = 0; cx <= this.map.size - 2; cx++) {
+        const x = cx * CELL;
+        const y = cy * CELL;
+        let blocked = false;
+        for (const [bx, by] of cellsOfRect(x, y, TANK_SIZE, TANK_SIZE)) {
+          const tt = terrainAt(this.map, bx, by);
+          if (tt === TerrainType.Brick || tt === TerrainType.Steel || tt === TerrainType.Water) { blocked = true; break; }
+        }
+        if (blocked) continue;
+        if (this.map.base &&
+            rectsOverlap(x, y, TANK_SIZE, TANK_SIZE, this.map.base.x, this.map.base.y, TANK_SIZE, TANK_SIZE)) continue;
+        if (this.tanks.some((o) => o.alive &&
+            x < o.x + TANK_SIZE - 0.01 && x + TANK_SIZE > o.x + 0.01 &&
+            y < o.y + TANK_SIZE - 0.01 && y + TANK_SIZE > o.y + 0.01)) continue;
+        return { x, y };
+      }
+    }
+    return null;
+  }
+
+  /** 吸附半格，但仅当吸附后位置无碰撞时生效（防止吸附把坦克推进另一辆坦克导致永久卡死） */
+  private trySnap(t: Tank): void {
+    if (isHorizontal(t.dir)) {
+      const sx = snap(t.x);
+      if (sx !== t.x && this.canOccupy(t, sx, t.y)) t.x = sx;
+    } else {
+      const sy = snap(t.y);
+      if (sy !== t.y && this.canOccupy(t, t.x, sy)) t.y = sy;
+    }
   }
 
   private isOnIce(t: Tank): boolean {
@@ -441,6 +496,8 @@ export class BattleSim {
       for (const [cx, cy, tt] of this.shovelBackup) {
         this.map.terrain[cy * this.map.size + cx] = tt;
       }
+      // 联机地形同步：钢墙恢复事件
+      this.events.push({ type: 'terrainSet', cells: this.shovelBackup.map(([cx, cy, tt]) => ({ x: cx, y: cy, t: tt })) });
       this.shovelBackup = null;
     }
 
@@ -486,9 +543,9 @@ export class BattleSim {
           if (o.id !== t.id && o.alive) o.frozenTicks = FREEZE_TICKS;
         }
         break;
-      case PowerupType.Bomb: // FR-P4：全图对手击毁，按击杀归属计分
+      case PowerupType.Bomb: // FR-P4：全图对手击毁，按击杀归属计分（护盾期内免疫，FR-T5/UT-P02）
         for (const o of [...this.tanks]) {
-          if (o.id !== t.id && o.alive) this.killTank(o, t.id);
+          if (o.id !== t.id && o.alive && o.shieldTicks <= 0) this.killTank(o, t.id);
         }
         break;
       case PowerupType.Shovel: // FR-P5
@@ -514,6 +571,8 @@ export class BattleSim {
         this.map.terrain[cy * this.map.size + cx] = TerrainType.Steel;
       }
       this.shovelBackup = cells;
+      // 联机地形同步：钢墙设置事件（客户端 TerrainView 应用）
+      this.events.push({ type: 'terrainSet', cells: cells.map(([cx, cy]) => ({ x: cx, y: cy, t: TerrainType.Steel })) });
     }
     this.shovelTicks = SHOVEL_TICKS;
   }
@@ -541,7 +600,18 @@ export class BattleSim {
     const cx = victim.x + TANK_SIZE / 2;
     const cy = victim.y + TANK_SIZE / 2;
     this.events.push({ type: 'explosion', x: cx, y: cy, big: true });
-    this.events.push({ type: 'kill', killerId, victimId: victim.id, x: cx, y: cy });
+    this.events.push({ type: 'kill', killerId: killerId, victimId: victim.id, x: cx, y: cy });
+
+    // 闪红坦克掉落（M5，FR-P 适配）：原地掉落随机道具（与既有道具重叠时跳过）
+    if (victim.bonus) {
+      const overlapped = this.powerups.some((p) =>
+        rectsOverlap(victim.x, victim.y, TANK_SIZE, TANK_SIZE, p.x, p.y, TANK_SIZE, TANK_SIZE));
+      if (!overlapped) {
+        const kinds = Object.values(PowerupType).filter((v): v is PowerupType => typeof v === 'number');
+        const kind = kinds[Math.floor(this.rng() * kinds.length)]!;
+        this.powerups.push({ id: this.nextPowerupId++, type: kind, x: victim.x, y: victim.y });
+      }
+    }
   }
 
   private endGame(winnerId: number | null): void {

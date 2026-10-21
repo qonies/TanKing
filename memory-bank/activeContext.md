@@ -1,7 +1,7 @@
 # 当前工作上下文（Active Context）
 
 ## 当前阶段
-**M4 多人体验完成（2026-10-20）**：69/69 测试通过，`tsc --noEmit` 0 错误。M1~M4 完成（单机核心 / 联机打通 / 内容完整 / 多人体验），**M4 已提交并推送 GitHub（b226cb2）**。下一步 M5 打磨发布。
+**M1~M5 全部完成（2026-10-21）**：M5 打磨发布落地，98/98 测试通过，`tsc --noEmit` 0 错误，行覆盖 91.3%（shared/sim 96.1%），性能验证达标（tick 0.002ms / 快照 1.4KB）。项目进入发布状态；剩余为发布后可选增强（E2E Playwright、FC 模拟器逐帧比对、像素素材、FR-T4 速度档）。
 
 ## 已确认的关键决策
 1. 核心玩法：**PvP 死亡竞技**（用户选定）。
@@ -62,7 +62,14 @@
   - **键位自定义（FR-S1）**：`client/input.ts` 支持每动作自定义主键（localStorage 持久化 `tanking-keybinds`），WASD/J 固定备用键；主菜单键位设置面板（点按捕获改键、冲突回落）
   - **限流（NFR-6）**：Room 按秒窗口限流 120 消息/连接，超限静默丢弃
   - **测试**：tests/m4.test.ts 13 例（loader 校验/对局中拒 join/重连接管/超时离场/结算清理/房主配置/聊天/限流/困难档抢道具）；server.test.ts 断线用例改为托管语义并显式传 maxTanks:2，总计 69/69
-- [ ] **M5 打磨发布**（下一里程碑）：原版参数逐帧核定（参数对照表 ⚠️ 项）、AI 速度档位、闪红 AI 掉落、旋律类音频、覆盖率工具（@vitest/coverage-v8）、性能验证、部署脚本
+- [x] **稳定性审查修复**（2026-10-21，当前阶段）：文档↔代码全面审查后按用户裁决修复，89/89 全绿：
+  - **P0（阻断性）**：① 6/8 人开局出生点唯一分配（地图 spawns 补足 8 个 + `findFreeSpot()` 行优先兜底扫描，修复同点重叠互相卡死）；② 松开/转向吸附增加碰撞校验 `trySnap()`（修复把坦克推进对手造成永久卡死）；③ HTTP 服务抽到 `server/http.ts`：URL 解析/读文件全 try/catch（畸形 URL 400）、`path.relative` 防路径逃逸、index.ts 加 uncaughtException 兜底。
+  - **P1（规则/联机体验）**：④ 炸弹尊重护盾（`shieldTicks <= 0` 才击毁，FR-T5）；⑤ `configure` 的 maxTanks 不低于当前成员数（防超员开局）；⑥ 重连同步：lobbyState 增加 `map` + `terrain`（完整地形数组，含已破坏砖墙/铁锹钢墙），客户端重建 TerrainView；⑦ 铁锹新增 `terrainSet` 事件（设置/恢复均下发），客户端 TerrainView.setCells 应用；⑧ 快照 `SnapshotTank` + deaths，lobbyState + `ticksLeft`/`roundResult`（胜者 + 排名），客户端结算覆盖层展示 5 秒；⑨ 广播仅发已加入成员、join 拒绝后关闭连接；客户端 `handleNetMessage` 增加 mode 守卫、error/回菜单时 `net.close()`；⑩ 输入 1s 超时归零（服务器 lastInputTick）+ 客户端 visibilitychange/pagehide 清零。
+  - **P2**：⑪ 大厅托管去重（离线成员合并为单条 `isBot:true, online:false`「托管」记录）；⑫ map01 基地格清树 + gen-maps 显式生成；⑬ loader 校验出生点重复/落在实体地形、基地被覆盖、道具点实体地形；⑭ Vite `server.host: true`；⑮ 快照整包只序列化一次（Conn.sendRaw）；⑯ `prestart` 检查 dist 产物（scripts/check-dist.cjs）。
+  - **文档同步**：PRD v0.4（状态行 + FR 范围标注）、技术路线（node:http/协议名/快照浮点/同名重连/地图 JSON 顶层 terrain/目录树）、测试文档（IT-02/07/08 语义、覆盖率与 E2E 标 M5）、参数对照表（AI 掉落、旋律）、README（M1~M4、修复清单、局域网联机说明）。
+  - 新增 tests/fixes.test.ts 20 例（出生点唯一 7 图、trySnap 2 例、HTTP 400/逃逸、炸弹护盾、铁锹事件、配置下限、重连地形、roundResult、广播范围、输入超时、loader 校验 3 例）；m4/movement/m3 三处断言随行为变更同步更新。
+- [x] **M5 打磨发布**（2026-10-21，当前阶段）：AI 速度三档（BOT_SPEED_BY_DIFFICULTY，Tank.speed）、闪红 AI 掉落（PlayerDef.bonus + BONUS_BOT_PROBABILITY 0.2，killTank 原地掉落，快照 bonus 字段，客户端闪烁渲染）、旋律音频（audio.ts 重构：双增益音量持久化 + jingle 开场/结算 + 原创循环 BGM 前瞻调度）、房主地图选择（config.map + selectedMap + 大厅下拉框）与地图预览（drawMapPreview）、音量滑杆 + 1x~3x 整数缩放（applyScale）、Tab 计分板、覆盖率工具（@vitest/coverage-v8，阈值 85/80，实测 91.3%/96.1%）、性能验证（scripts/perf.ts，`npm run perf`）、部署脚本（deploy.cjs + firewall.ps1）；tests/m5.test.ts 9 例，总计 98/98；PRD v0.5 / 参数对照表 M5 结论 / 测试文档 / README 同步；version 0.5.0
+- [ ] **发布后可选增强**（不阻塞发布）：E2E Playwright、FC 模拟器逐帧像素比对、正式像素素材、FR-T4 等级移动速度差异档
 
 ## M1 实现要点（后续开发需遵守）
 1. **输入统一为位掩码**：`INPUT_UP=1/DOWN=2/LEFT=4/RIGHT=8/FIRE=16`（不是 `1<<Dir`！），真人与 AI 都走 `sim.setInput(id, mask)`。

@@ -38,6 +38,10 @@ export interface PlayerDef {
   name: string;
   isBot?: boolean;
   color?: string;
+  /** 坦克速度 px/tick（缺省 TANK_SPEED；M5 AI 速度档位由 Room 按 botDifficulty 传入） */
+  speed?: number;
+  /** 闪红坦克（M5）：被击毁时原地掉落随机道具 */
+  bonus?: boolean;
 }
 
 export interface TankState {
@@ -93,5 +97,6 @@ export type SimEvent =
   | { type: 'brickBreak'; x: number; y: number }
   | { type: 'shoot'; x: number; y: number }
   | { type: 'powerupPickup'; tankId: number; kind: PowerupType; x: number; y: number }
+  | { type: 'terrainSet'; cells: { x: number; y: number; t: TerrainType }[] } // 铁锹钢墙设置/恢复（联机地形同步）
   | { type: 'baseDestroyed'; byId: number; x: number; y: number }
   | { type: 'gameOver'; winnerId: number | null };

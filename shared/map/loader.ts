@@ -68,6 +68,48 @@ export function loadMap(def: MapDef): LoadedMap {
     }
   }
 
+  // 出生点：不允许重复，且 2×2 范围不得落在实体地形（砖/钢/水）上
+  const seenSpawns = new Set<string>();
+  for (const p of def.spawns) {
+    const key = `${p.x},${p.y}`;
+    if (seenSpawns.has(key)) {
+      throw new Error(`地图 "${def.name}" 出生点重复: (${p.x}, ${p.y})`);
+    }
+    seenSpawns.add(key);
+    for (let y = p.y; y < p.y + 2; y++) {
+      for (let x = p.x; x < p.x + 2; x++) {
+        const tt = terrain[y * GRID + x]!;
+        if (tt === TerrainType.Brick || tt === TerrainType.Steel || tt === TerrainType.Water) {
+          throw new Error(`地图 "${def.name}" 出生点 (${p.x}, ${p.y}) 落在实体地形上`);
+        }
+      }
+    }
+  }
+
+  // 基地：2×2 范围不得被实体地形或树林覆盖（否则渲染与碰撞语义冲突）
+  if (base && def.base) {
+    for (let y = def.base.y; y < def.base.y + 2; y++) {
+      for (let x = def.base.x; x < def.base.x + 2; x++) {
+        const tt = terrain[y * GRID + x]!;
+        if (tt !== TerrainType.Empty && tt !== TerrainType.Ice) {
+          throw new Error(`地图 "${def.name}" 基地格 (${x}, ${y}) 被地形覆盖`);
+        }
+      }
+    }
+  }
+
+  // 道具点：不得落在实体地形（砖/钢/水）上
+  for (const p of def.powerupSpots ?? []) {
+    for (let y = p.y; y < p.y + 2; y++) {
+      for (let x = p.x; x < p.x + 2; x++) {
+        const tt = terrain[y * GRID + x]!;
+        if (tt === TerrainType.Brick || tt === TerrainType.Steel || tt === TerrainType.Water) {
+          throw new Error(`地图 "${def.name}" 道具点 (${p.x}, ${p.y}) 落在实体地形上`);
+        }
+      }
+    }
+  }
+
   return { name: def.name, size: GRID, terrain, spawns, base, powerupSpots };
 }
 

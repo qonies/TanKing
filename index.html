@@ -82,12 +82,29 @@
     #feed { list-style: none; display: flex; flex-direction: column; gap: 2px; min-height: 80px; }
     #feed li { color: #c96; font-size: 12px; }
     #help { color: #666; font-size: 12px; line-height: 1.7; margin-top: auto; }
+    /* M5：音量设置（FR-S2） */
+    #vol-row { display: flex; gap: 14px; font-size: 13px; align-items: center; }
+    #vol-row label { display: flex; align-items: center; gap: 6px; }
+    #vol-row input[type="range"] { width: 90px; accent-color: #e8c838; }
+    /* M5：地图预览（FR-U2） */
+    #map-preview { image-rendering: pixelated; border: 2px solid #444; background: #000; }
+    /* M5：Tab 计分板（FR-U3） */
+    #scoreboard {
+      position: absolute; inset: 0; z-index: 4;
+      display: none; align-items: center; justify-content: center;
+      background: rgba(0, 0, 0, 0.82); pointer-events: none;
+    }
+    #scoreboard.show { display: flex; }
+    #scoreboard table { border-collapse: collapse; font-size: 14px; }
+    #scoreboard th, #scoreboard td { padding: 4px 14px; text-align: left; border-bottom: 1px solid #333; }
+    #scoreboard th { color: #e8c838; font-size: 12px; }
   </style>
 </head>
 <body>
   <div id="app">
     <div id="stage">
       <canvas id="game" width="416" height="416"></canvas>
+      <div id="scoreboard"><table><thead><tr><th>排名</th><th>玩家</th><th>积分</th><th>击杀</th><th>死亡</th><th>等级</th><th>状态</th></tr></thead><tbody id="scoreboard-body"></tbody></table></div>
       <div id="overlay"><h1 id="overlay-title"></h1><p id="overlay-text"></p></div>
       <div id="menu" class="show">
         <h1>TanKing</h1>
@@ -97,6 +114,10 @@
           <button id="btn-single">单机模式</button>
           <button id="btn-online">联机对战</button>
           <button id="btn-keys">键位设置</button>
+        </div>
+        <div id="vol-row">
+          <label>音效 <input id="vol-sfx" type="range" min="0" max="100" step="5" /></label>
+          <label>音乐 <input id="vol-music" type="range" min="0" max="100" step="5" /></label>
         </div>
         <p id="menu-msg"></p>
       </div>
@@ -127,7 +148,11 @@
               <option value="hard">困难</option>
             </select>
           </label>
+          <label>地图
+            <select id="cfg-map"></select>
+          </label>
         </div>
+        <canvas id="map-preview" width="130" height="130" class="hidden"></canvas>
         <button id="btn-start" class="hidden">开始游戏</button>
         <p id="lobby-status"></p>
         <div id="chat-log"></div>
@@ -144,8 +169,9 @@
       <ul id="feed"></ul>
       <div id="help">
         操作：方向键 / WASD 移动，空格 / J 射击（主菜单可自定义键位）<br />
-        对局中按 1~5 发送快捷短语 · 按 R 重新开始（单机）<br />
-        先达 1000 分获胜；8 分钟限时后积分最高者获胜
+        对局中按 1~5 发送快捷短语 · 按 Tab 查看计分板 · 按 R 重新开始（单机）<br />
+        先达 1000 分获胜；8 分钟限时后积分最高者获胜<br />
+        击毁闪红坦克会掉落道具
       </div>
     </div>
   </div>

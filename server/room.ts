@@ -1,6 +1,6 @@
-import { BotController, type BotDifficulty } from '../shared/sim/bot';
+import { BotController, BOT_SPEED_BY_DIFFICULTY, type BotDifficulty } from '../shared/sim/bot';
 import { BattleSim, PALETTE } from '../shared/sim/sim';
-import { ROUND_TICKS_DEFAULT, SCORE_CAP_DEFAULT, TICK_RATE } from '../shared/constants';
+import { BONUS_BOT_PROBABILITY, ROUND_TICKS_DEFAULT, SCORE_CAP_DEFAULT, TICK_RATE } from '../shared/constants';
 import { mulberry32 } from '../shared/rng';
 import type { MapDef, PlayerDef } from '../shared/types';
 import type { C2SMessage, LobbyPlayer, RoomPhase, S2CMessage } from '../shared/protocol';
@@ -12,6 +12,10 @@ export type { BotDifficulty };
 export interface Conn {
   readonly id: number;
   send(msg: S2CMessage): void;
+  /** 可选：直接发送已序列化的 JSON（快照等高频消息整包只序列化一次） */
+  sendRaw?(json: string): void;
+  /** 可选：服务器主动断开连接（join 被拒绝时调用） */
+  close?(): void;
 }
 
 export interface RoomOptions {
@@ -64,8 +68,11 @@ export class Room {
   private totalTicks = 0;
   private msgWindow = -1;
   private readonly msgCounts = new Map<number, number>();
+  private readonly lastInputTick = new Map<number, number>(); // connId → 最近一次输入的 totalTicks（输入超时归零用）
   private cfgMaxTanks: number | null = null;
   private cfgDifficulty: BotDifficulty | null = null;
+  /** 房主选定的下一局地图名（null = 随机轮换，M5 FR-N3） */
+  private cfgMap: string | null = null;
 
   constructor(
     private readonly maps: MapDef[],
@@ -129,7 +136,7 @@ export class Room {
       case 'join': this.join(connId, msg.name); break;
       case 'start': this.start(connId); break;
       case 'input': this.applyInput(connId, msg.mask); break;
-      case 'config': this.configure(connId, msg.maxTanks, msg.botDifficulty); break;
+      case 'config': this.configure(connId, msg.maxTanks, msg.botDifficulty, msg.map); break;
       case 'chat': this.chat(connId, msg.text); break;
       default: break; // 未知消息忽略，服务器不崩溃（IT-08）
     }
@@ -148,6 +155,13 @@ export class Room {
     } else if (this.phase === 'playing') {
       const sim = this.sim!;
       for (const [tankId, bot] of this.bots) sim.setInput(tankId, bot.update());
+      // 输入超时归零：1s 未收到输入的在线成员停止移动（切后台/半开连接保护）
+      for (const m of this.members.values()) {
+        if (m.online && m.tankId >= 0 &&
+            this.totalTicks - (this.lastInputTick.get(m.connId) ?? Number.NEGATIVE_INFINITY) > TICK_RATE) {
+          sim.setInput(m.tankId, 0);
+        }
+      }
       // FR-N4：断线成员超时判离场（成员移除，坦克继续由托管 AI 代打）
       for (const m of [...this.members.values()]) {
         if (!m.online && ++m.offlineTicks > HOST_TIMEOUT_TICKS) {
@@ -191,6 +205,7 @@ export class Room {
       const gone = [...this.members.values()].find((m) => !m.online && m.name === name && m.tankId >= 0);
       if (!gone) {
         conn.send({ t: 'error', message: '对局进行中，请等待下一局再加入' });
+        conn.close?.(); // 拒绝后断开，避免未加入的连接继续挂在房间上
         return;
       }
       this.members.delete(gone.connId);
@@ -206,6 +221,7 @@ export class Room {
 
     if (this.members.size >= this.maxTanks) {
       conn.send({ t: 'error', message: '房间已满' });
+      conn.close?.();
       return;
     }
     const color = PALETTE[this.members.size % PALETTE.length]!;
@@ -219,13 +235,22 @@ export class Room {
     if (connId !== this.ownerConnId() || this.members.size === 0) return;
 
     const seed = this.seed;
-    const mapDef = this.maps[this.mapIndex % this.maps.length]!;
+    // M5 FR-N3：房主选定地图优先；未选定（null/非法名）按局轮换
+    const rotated = this.maps[this.mapIndex % this.maps.length]!;
+    const mapDef = (this.cfgMap && this.maps.find((m) => m.name === this.cfgMap)) || rotated;
     this.mapIndex++;
     const humans = [...this.members.values()].sort((a, b) => a.connId - b.connId);
     const playerDefs: PlayerDef[] = humans.map((m) => ({ name: m.name, isBot: false, color: m.color }));
+    const bonusRng = mulberry32(seed + 7777); // 闪红 AI 判定（确定性，可复现）
     while (playerDefs.length < this.maxTanks) {
       const i = playerDefs.length;
-      playerDefs.push({ name: `Bot-${i}`, isBot: true, color: PALETTE[i % PALETTE.length]! });
+      playerDefs.push({
+        name: `Bot-${i}`,
+        isBot: true,
+        color: PALETTE[i % PALETTE.length]!,
+        speed: BOT_SPEED_BY_DIFFICULTY[this.botDifficulty], // M5：AI 速度档位
+        bonus: bonusRng() < BONUS_BOT_PROBABILITY,          // M5：低概率闪红坦克
+      });
     }
 
     this.sim = new BattleSim(mapDef, playerDefs, {
@@ -255,16 +280,22 @@ export class Room {
     }
   }
 
-  /** 房主设置（FR-N3）：仅 waiting/roundEnd 阶段、仅房主可改 */
-  private configure(connId: number, maxTanks?: number, difficulty?: BotDifficulty): void {
+  /** 房主设置（FR-N3）：仅 waiting/roundEnd 阶段、仅房主可改；map 为非法名/null 时回落随机轮换 */
+  private configure(connId: number, maxTanks?: number, difficulty?: BotDifficulty, map?: string | null): void {
     if (this.phase !== 'waiting' && this.phase !== 'roundEnd') return;
     if (connId !== this.ownerConnId()) return;
     if (maxTanks !== undefined) {
       const n = Math.round(Number(maxTanks));
-      if (Number.isFinite(n)) this.cfgMaxTanks = Math.min(MAX_TANKS_CAP, Math.max(2, n));
+      if (Number.isFinite(n)) {
+        // 不允许低于当前成员数：防止房主调小后按超员人数开局（实际坦克数 > 配置上限）
+        this.cfgMaxTanks = Math.min(MAX_TANKS_CAP, Math.max(2, this.members.size, n));
+      }
     }
     if (difficulty === 'easy' || difficulty === 'normal' || difficulty === 'hard') {
       this.cfgDifficulty = difficulty;
+    }
+    if (map !== undefined) {
+      this.cfgMap = map && this.maps.some((m) => m.name === map) ? map : null;
     }
     this.broadcastLobby();
   }
@@ -282,25 +313,40 @@ export class Room {
     const member = this.members.get(connId);
     if (this.sim && member && member.tankId >= 0) {
       this.sim.setInput(member.tankId, mask & 0xff);
+      this.lastInputTick.set(connId, this.totalTicks);
     }
   }
 
+  /** 仅向已加入成员广播（未加入/被拒绝的连接不接收任何游戏消息） */
   private broadcast(msg: S2CMessage): void {
-    for (const conn of this.conns.values()) conn.send(msg);
+    for (const m of this.members.values()) {
+      this.conns.get(m.connId)?.send(msg);
+    }
   }
 
   private broadcastLobby(): void {
-    const players: LobbyPlayer[] = [...this.members.values()]
-      .sort((a, b) => a.connId - b.connId)
-      .map((m) => ({ connId: m.connId, tankId: m.tankId, name: m.name, color: m.color, isBot: false, online: m.online }));
+    const players: LobbyPlayer[] = [];
+    const hostedTanks = new Set<number>(); // 断线托管坦克（成员记录已覆盖，AI 行不再重复展示）
+    for (const m of [...this.members.values()].sort((a, b) => a.connId - b.connId)) {
+      if (m.tankId >= 0 && !m.online) {
+        // 断线托管：合并为一条「托管」记录，避免同一玩家出现真人 + AI 两行
+        hostedTanks.add(m.tankId);
+        players.push({ connId: m.connId, tankId: m.tankId, name: m.name, color: m.color, isBot: true, online: false });
+      } else {
+        players.push({ connId: m.connId, tankId: m.tankId, name: m.name, color: m.color, isBot: false, online: m.online });
+      }
+    }
     if (this.sim) {
       for (const t of this.sim.tanks) {
+        if (hostedTanks.has(t.id)) continue;
         // 补位 AI 与断线托管坦克均以 AI 身份展示
         if (t.isBot || this.bots.has(t.id)) {
           players.push({ connId: -1, tankId: t.id, name: t.name, color: t.color, isBot: true, online: true });
         }
       }
     }
+    const inGame = this.sim !== null &&
+      (this.phase === 'countdown' || this.phase === 'playing' || this.phase === 'roundEnd');
     this.broadcast({
       t: 'lobbyState',
       phase: this.phase,
@@ -311,22 +357,45 @@ export class Room {
       players,
       maxTanks: this.maxTanks,
       botDifficulty: this.botDifficulty,
+      // M5 FR-N3：房主选定的下一局地图（大厅地图预览/下拉框用）
+      selectedMap: this.cfgMap,
+      // 重连同步：当前地图 + 完整地形（含已破坏砖墙/铁锹钢墙），客户端据此重建 TerrainView
+      map: inGame ? this.sim!.map.name : undefined,
+      terrain: inGame ? Array.from(this.sim!.map.terrain) : undefined,
+      ticksLeft: this.phase === 'playing' && this.sim ? this.sim.remainingTicks : null,
+      // 回合结算（FR-U4）：排名 + 击杀/死亡
+      roundResult: this.phase === 'roundEnd' && this.sim
+        ? {
+            winnerId: this.sim.winnerId,
+            ranks: [...this.sim.tanks]
+              .sort((a, b) => b.score - a.score || a.id - b.id)
+              .map((t) => ({ tankId: t.id, score: t.score, kills: t.kills, deaths: t.deaths })),
+          }
+        : null,
     });
   }
 
   private broadcastSnapshot(): void {
     const sim = this.sim!;
-    this.broadcast({
+    const msg: S2CMessage = {
       t: 'snapshot',
       tick: sim.tick,
       tanks: sim.tanks.map((t) => ({
         id: t.id, x: t.x, y: t.y, dir: t.dir, moving: t.moving, alive: t.alive,
         shieldTicks: t.shieldTicks, respawnTicks: t.respawnTicks, level: t.level, frozenTicks: t.frozenTicks,
-        score: t.score, kills: t.kills,
+        score: t.score, kills: t.kills, deaths: t.deaths, bonus: t.bonus,
       })),
       bullets: sim.bullets.map((b) => ({ id: b.id, ownerId: b.ownerId, dir: b.dir, x: b.x, y: b.y })),
       powerups: sim.powerups.map((p) => ({ id: p.id, type: p.type, x: p.x, y: p.y })),
       baseAlive: sim.baseAlive,
-    });
+    };
+    // 性能：同一 tick 的快照整包只序列化一次，支持 sendRaw 的连接复用 JSON 字符串
+    const json = JSON.stringify(msg);
+    for (const m of this.members.values()) {
+      const conn = this.conns.get(m.connId);
+      if (!conn) continue;
+      if (conn.sendRaw) conn.sendRaw(json);
+      else conn.send(msg);
+    }
   }
 }

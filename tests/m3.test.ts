@@ -142,6 +142,8 @@ describe('道具效果（FR-P1~P6）', () => {
     const sim = makeSim();
     const a = sim.tanks[0]!;
     const b = sim.tanks[1]!;
+    a.shieldTicks = 0; // 清掉出生护盾（护盾免疫炸弹见 fixes.test.ts，FR-T5）
+    b.shieldTicks = 0;
     sim.powerups.push({ id: 1, type: PowerupType.Bomb, x: a.x, y: a.y });
     sim.step();
     expect(b.alive).toBe(false);

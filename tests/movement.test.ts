@@ -111,9 +111,9 @@ describe('坦克碰撞（FR-M1/M2/M3、坦克互为障碍）', () => {
     const a = sim.tanks[0]!;
     const b = sim.tanks[1]!;
     const c = sim.tanks[2]!;
-    // 初始布局：tank1 → spawn1，tank2 → spawn0，两个出生点都被占住
+    // P0 修复后初始出生点唯一分配：tank0 → spawn0、tank1 → spawn1、tank2 → 兜底安全位
     expect(b.x).toBe(TWO_SPAWNS[1]!.x * CELL);
-    expect(c.x).toBe(TWO_SPAWNS[0]!.x * CELL);
+    expect(new Set([a, b, c].map((t) => `${t.x},${t.y}`)).size).toBe(3);
     a.alive = false;
     a.respawnTicks = 1;
     sim.step(); // 触发 A 重生（出生点被占 → 走随机/兜底搜索）

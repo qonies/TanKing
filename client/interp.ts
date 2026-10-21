@@ -68,4 +68,18 @@ export class TerrainView {
       this.grid[cy * this.size + cx] = TerrainType.Empty;
     }
   }
+
+  /** 重连同步：应用服务器下发的完整地形（含已破坏砖墙与铁锹钢墙） */
+  applyTerrain(cells: number[]): void {
+    if (cells.length === this.grid.length) this.grid.set(cells);
+  }
+
+  /** terrainSet 事件（FR-P5 铁锹）：设置/恢复若干小格地形 */
+  setCells(cells: { x: number; y: number; t: TerrainType }[]): void {
+    for (const c of cells) {
+      if (c.x >= 0 && c.y >= 0 && c.x < this.size && c.y < this.size) {
+        this.grid[c.y * this.size + c.x] = c.t;
+      }
+    }
+  }
 }

@@ -127,8 +127,10 @@ describe('L2 集成：回合结束与断线（IT-05/06）', () => {
     room.handleMessage(2, { t: 'input', mask: INPUT_LEFT });
     room.removeConnection(2);
     const lobby = a.last('lobbyState')!;
-    const bob = lobby.players.find((p) => p.name === 'Bob' && !p.isBot)!;
+    const bob = lobby.players.find((p) => p.name === 'Bob')!;
+    expect(bob.isBot).toBe(true); // P2 修复：托管成员合并为单条「托管」记录
     expect(bob.online).toBe(false); // 成员保留（60s 内可重连）
+    expect(lobby.players.filter((p) => p.name === 'Bob').length).toBe(1);
     expect(room.ownerConnId()).toBe(1);
     for (let i = 0; i < 60; i++) room.step(); // 对局继续，托管 AI 驱动其坦克
     expect(room.phase).toBe('playing');

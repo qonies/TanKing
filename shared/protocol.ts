@@ -29,6 +29,17 @@ export interface SnapshotTank {
   frozenTicks: number;
   score: number;
   kills: number;
+  deaths: number;
+  /** 闪红坦克（M5）：击毁时掉落道具，客户端闪烁渲染 */
+  bonus: boolean;
+}
+
+export interface RoundRank { tankId: number; score: number; kills: number; deaths: number }
+
+/** 回合结算（roundEnd 阶段随 lobbyState 下发，FR-U4） */
+export interface RoundResult {
+  winnerId: number | null;
+  ranks: RoundRank[];
 }
 
 export interface SnapshotBullet {
@@ -59,14 +70,17 @@ export type C2SMessage =
   | { t: 'join'; name: string }
   | { t: 'start' }
   | { t: 'input'; mask: number }
-  | { t: 'config'; maxTanks?: number; botDifficulty?: BotDifficulty } // 房主设置（FR-N3）
+  | { t: 'config'; maxTanks?: number; botDifficulty?: BotDifficulty; map?: string | null } // 房主设置（FR-N3；map 为 null/'' 表示随机轮换）
   | { t: 'chat'; text: string }; // 大厅聊天 / 游戏中快捷短语（D4）
 
 // ---- S→C ----
 export type S2CMessage =
   | { t: 'welcome'; connId: number }
   | { t: 'start'; map: string }
-  | { t: 'lobbyState'; phase: RoomPhase; ownerConnId: number; secondsLeft: number | null; players: LobbyPlayer[]; maxTanks: number; botDifficulty: BotDifficulty }
+  | { t: 'lobbyState'; phase: RoomPhase; ownerConnId: number; secondsLeft: number | null; players: LobbyPlayer[]; maxTanks: number; botDifficulty: BotDifficulty;
+      /** 房主选定的下一局地图（null = 随机轮换，M5 FR-N3） */
+      selectedMap?: string | null;
+      map?: string; terrain?: number[]; ticksLeft?: number | null; roundResult?: RoundResult | null }
   | { t: 'snapshot'; tick: number; tanks: SnapshotTank[]; bullets: SnapshotBullet[]; powerups: SnapshotPowerup[]; baseAlive: boolean }
   | { t: 'event'; event: SimEvent }
   | { t: 'chat'; from: string; color: string; text: string }
