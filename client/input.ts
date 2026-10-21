@@ -25,15 +25,6 @@ const DEFAULT_BINDS: Record<Action, string> = {
   fire: 'Space',
 };
 
-/** 同一键被别的动作占用时，原动作回落到这组备用键 */
-const FALLBACK_BINDS: Record<Action, string> = {
-  up: 'KeyW',
-  down: 'KeyS',
-  left: 'KeyA',
-  right: 'KeyD',
-  fire: 'KeyJ',
-};
-
 const STORAGE_KEY = 'tanking-keybinds';
 
 function loadBinds(): Record<Action, string> {
@@ -103,9 +94,10 @@ export class KeyboardInput {
   }
 
   setBind(action: Action, code: string): void {
-    for (const a of Object.keys(this.binds) as Action[]) {
-      if (a !== action && this.binds[a] === code) this.binds[a] = FALLBACK_BINDS[a]!;
-    }
+    if (this.binds[action] === code) return;
+    // 与其他动作冲突时交换绑定（保证任意时刻各动作按键唯一，不会出现不可达动作）
+    const other = (Object.keys(this.binds) as Action[]).find((a) => a !== action && this.binds[a] === code);
+    if (other) this.binds[other] = this.binds[action]!;
     this.binds[action] = code;
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(this.binds)); } catch { /* 存储不可用时忽略 */ }
   }

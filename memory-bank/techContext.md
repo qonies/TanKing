@@ -11,8 +11,8 @@
 | 后端 | Node.js 20+ + TypeScript | 同一语言栈，游戏逻辑可前后端共享 |
 | 通信 | WebSocket（`ws` 库）+ 自定义二进制/JSON 协议 | 局域网低延迟，服务器权威模型 |
 | 房间服务 | Node 进程同时托管 HTTP 静态文件 + WebSocket | 一个命令启动，客户端访问 `http://<host-ip>:3000` |
-| 单元测试 | Vitest | 游戏逻辑纯函数化，Node 环境 headless 运行；覆盖率 @vitest/coverage-v8（`npm run test:coverage`，阈值行 85%/函数 80%） |
-| 性能验证 | scripts/perf.ts（`npm run perf`） | 完整服务器 tick（AI 决策 + 模拟 + 快照序列化）：avg 0.015ms（预算 16.67ms）/ 快照 1.44KB（0.6.0 实测） |
+| 单元测试 | Vitest | 游戏逻辑纯函数化，Node 环境 headless 运行；覆盖率 @vitest/coverage-v8（`npm run test:coverage`，阈值行 85%/函数 80%，实测 92.1%，sim 96.5%/room 99.4%；client/interp.ts 亦有 5 例单测） |
+| 性能验证 | scripts/perf.ts（`npm run perf`） | 完整服务器 tick（AI 决策 + 模拟 + 快照序列化）：avg ≈0.013ms（预算 16.67ms）/ 快照 1.44KB（0.6.x 实测，随机器波动） |
 | E2E 测试 | Playwright | 多浏览器页面实例模拟多人联机（**发布后可选增强，M5 未落地**） |
 
 ## 开发环境（Windows）

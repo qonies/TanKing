@@ -6,6 +6,7 @@ import type { S2CMessage } from '../shared/protocol';
 import { MAPS } from '../shared/maps';
 import { startTickLoop } from './gameLoop';
 import { createHttpServer } from './http';
+import { originAllowed } from './origin';
 import { Room, type Conn } from './room';
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -17,19 +18,6 @@ const server = createHttpServer(DIST);
 
 // ---- 游戏房间（内置地图轮换；D3 默认 6 坦克，房主可配置 2~8） ----
 const room = new Room(MAPS, { maxTanks: 6 });
-
-/** WebSocket 握手 Origin 校验（NFR-6）：拒绝来自其他站点的跨站 WebSocket（CSWSH） */
-function originAllowed(origin: string | undefined, host: string | undefined): boolean {
-  if (!origin) return true; // 非浏览器客户端（测试/工具）允许
-  try {
-    const o = new URL(origin);
-    if (host && o.host === host) return true; // 同源（生产模式 / Vite 代理）
-    const hn = o.hostname;
-    return hn === 'localhost' || hn === '127.0.0.1' || hn === '[::1]'; // 本机调试
-  } catch {
-    return false;
-  }
-}
 
 // ---- WebSocket：与 HTTP 共享端口，路径 /ws ----
 const MAX_CONNECTIONS = 32; // 局域网游戏足够，防止连接洪水

@@ -1,9 +1,10 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHttpServer } from '../server/http';
 import { startTickLoop } from '../server/gameLoop';
+import { originAllowed } from '../server/origin';
 import { Room, type Conn } from '../server/room';
 import { loadMap } from '../shared/map/loader';
 import { BattleSim } from '../shared/sim/sim';
@@ -440,6 +441,13 @@ describe('修复：Room 输入与配置健壮性', () => {
 });
 
 describe('修复：gameLoop tick 异常容错（NFR-5）', () => {
+  // 静音用例故意触发的 console.error（避免 stderr 让 IDE/CI 误判测试失败）
+  let errSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => errSpy.mockRestore());
+
   it('onTick 抛异常后循环继续推进（不再永久停摆）', async () => {
     let n = 0;
     const stop = startTickLoop(2, () => {
@@ -468,6 +476,73 @@ describe('修复：AI 基地嗅探（FR-A2）', () => {
     const t = sim.tanks[0]!;
     const dist1 = Math.hypot(t.x - base.x, t.y - base.y);
     expect(dist1).toBeLessThan(dist0 - 64);
+  });
+});
+
+// ---------------------------------------------------------------- P2（2026-10-21 审查修复）
+
+describe('修复：FR-N3 配置范围服务端强校验', () => {
+  it('scoreCap 300~5000 / roundMinutes 1~30，越界被夹取', () => {
+    const { room, a } = joinedRoom(2);
+    room.handleMessage(1, { t: 'config', scoreCap: 99999, roundMinutes: 120 });
+    let lobby = a.last('lobbyState')!;
+    expect(lobby.scoreCap).toBe(5000);
+    expect(lobby.roundMinutes).toBe(30);
+
+    room.handleMessage(1, { t: 'config', scoreCap: 10, roundMinutes: 0 });
+    lobby = a.last('lobbyState')!;
+    expect(lobby.scoreCap).toBe(300);
+    expect(lobby.roundMinutes).toBe(1);
+  });
+});
+
+describe('修复：结算阶段断线保留席位（FR-N4）', () => {
+  it('roundEnd 断线成员保留并可同名重连接管', () => {
+    const room = new Room([makeMap([], TWO_SPAWNS)], { maxTanks: 2, timeTicks: 120 });
+    const a = new FakeConn(1);
+    const b = new FakeConn(2);
+    room.addConnection(a);
+    room.addConnection(b);
+    room.handleMessage(1, { t: 'join', name: 'Alice' });
+    room.handleMessage(2, { t: 'join', name: 'Bob' });
+    startPlaying(room);
+    for (let i = 0; i < 121; i++) room.step();
+    expect(room.phase).toBe('roundEnd');
+
+    room.removeConnection(2); // 结算阶段断线：成员保留（不再立刻删除）
+    const bob = a.last('lobbyState')!.players.find((p) => p.name === 'Bob')!;
+    expect(bob.online).toBe(false);
+
+    const b2 = new FakeConn(9);
+    room.addConnection(b2);
+    room.handleMessage(9, { t: 'join', name: 'Bob' }); // 同名重连接管
+    expect(b2.last('welcome')).toMatchObject({ t: 'welcome', connId: 9 });
+    const bob2 = b2.last('lobbyState')!.players.find((p) => p.name === 'Bob' && !p.isBot)!;
+    expect(bob2.online).toBe(true);
+    expect(bob2.tankId).toBe(1);
+
+    for (let i = 0; i < 5 * TICK_RATE; i++) room.step(); // 结算结束回 Waiting
+    expect(room.phase).toBe('waiting');
+    room.handleMessage(1, { t: 'start' });
+    expect(room.phase).toBe('countdown');
+  });
+});
+
+describe('修复：WS Origin 校验收紧（本机回环限定）', () => {
+  it('同源与无 Origin 放行', () => {
+    expect(originAllowed('http://192.168.1.5:3000', '192.168.1.5:3000')).toBe(true);
+    expect(originAllowed('http://localhost:5173', 'localhost:5173')).toBe(true);
+    expect(originAllowed(undefined, 'localhost:3000')).toBe(true);
+  });
+
+  it('跨站拒绝；回环 Origin 仅在请求 Host 也为回环时放行；畸形 Origin 拒绝', () => {
+    expect(originAllowed('http://evil.example', '192.168.1.5:3000')).toBe(false);
+    // 修复点：本机其他端口页面跨站连接局域网地址（回环 Origin + 非回环 Host）→ 拒绝
+    expect(originAllowed('http://localhost:8080', '192.168.1.5:3000')).toBe(false);
+    // 回环 → 回环：同一信任域（本机调试）放行
+    expect(originAllowed('http://localhost:8080', 'localhost:3000')).toBe(true);
+    expect(originAllowed('http://[::1]:5173', '[::1]:3000')).toBe(true);
+    expect(originAllowed('::bad::', 'localhost:3000')).toBe(false);
   });
 });
 

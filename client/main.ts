@@ -66,7 +66,7 @@ let renderer = new Renderer(ctx);
 let feed: FeedItem[] = [];
 let scoreRows = new Map<number, { score: HTMLElement; status: HTMLElement }>();
 const audio = new AudioFx();
-const keys = new KeyboardInput(() => { if (mode === 'single') startSingle(); });
+const keys = new KeyboardInput(() => { if (mode === 'single') startSingle(true); }); // R 重开保持同一地图
 
 // ---- 单机状态 ----
 let sim: BattleSim;
@@ -87,6 +87,14 @@ let onlineHudCd = 0;
 let roomPhase: RoomPhase = 'waiting';
 let prevPhase: RoomPhase | null = null; // M5：阶段切换检测（音频触发）
 
+// ---- 断线自动重连（FR-N4 客户端侧）：同名重连接管原坦克，最多自动尝试 3 次 ----
+const NICK_KEY = 'tanking-nick';
+const RECONNECT_MAX = 3;
+const RECONNECT_DELAY_MS = 1000;
+let rejoinName: string | null = null; // 本次会话使用的联机昵称（重连沿用，保证同名接管）
+let reconnectAttempts = 0;
+let reconnectTimer = 0;
+
 function showPanel(el: HTMLElement | null): void {
   for (const p of [menuEl, lobbyEl]) p.classList.toggle('show', p === el);
   keysPanel.classList.remove('show');
@@ -95,6 +103,7 @@ function showPanel(el: HTMLElement | null): void {
 
 function showMenu(msg = ''): void {
   mode = 'menu';
+  window.clearTimeout(reconnectTimer); // 取消未完成的重连尝试
   net.close(); // 回菜单即断开：避免残留连接继续接收广播（误触音效/结算覆盖层）
   audio.stopBgm(); // M5：BGM 随对局结束
   audio.engine(false); // 履带声同步停止
@@ -183,11 +192,14 @@ function handleSimEvent(e: SimEvent, tick: number, nameOf: (id: number) => strin
 
 // ---- 单机模式 ----
 
-function startSingle(): void {
+let singleMapIndex = Math.floor(Math.random() * MAPS.length);
+
+function startSingle(keepMap = false): void {
   mode = 'single';
   const total = Math.min(8, Math.max(2, Number(singleTanks.value) || 6));
   const diff = (singleDiff.value as BotDifficulty) || 'normal';
-  const mapDef = MAPS[Math.floor(Math.random() * MAPS.length)]!; // 单机随机地图
+  if (!keepMap) singleMapIndex = Math.floor(Math.random() * MAPS.length); // 进入单机时随机选图
+  const mapDef = MAPS[singleMapIndex]!; // R 重开保持同一张地图（便于复盘重试）
   const players: PlayerDef[] = [{ name: '玩家', isBot: false, color: '#e8c838' }];
   const bonusRng = mulberry32(SEED + 7777); // 闪红标记与联机同规则（确定性）
   for (let i = 1; i < total; i++) {
@@ -244,12 +256,41 @@ function goOnline(): void {
   prevPhase = null;
   audio.engine(false);
   chatLog.replaceChildren();
-  net.onOpen = () => net.send({ t: 'join', name: nickInput.value });
+  // 昵称会话内持久化：断线自动重连与刷新页面后回填，保证同名接管（FR-N4）
+  const name = nickInput.value.trim() || `玩家${Math.floor(Math.random() * 900 + 100)}`;
+  nickInput.value = name;
+  try { sessionStorage.setItem(NICK_KEY, name); } catch { /* 存储不可用时忽略 */ }
+  rejoinName = name;
+  reconnectAttempts = 0;
+  window.clearTimeout(reconnectTimer);
+  connectAndJoin();
+}
+
+/** 建立 WebSocket 连接并以当前昵称 join（goOnline 与断线重连共用） */
+function connectAndJoin(): void {
+  net.onOpen = () => net.send({ t: 'join', name: rejoinName ?? nickInput.value });
   net.onMessage = handleNetMessage;
-  net.onClose = () => showMenu('与服务器断开连接');
+  net.onClose = onNetClose;
   lobbyStatus.textContent = '连接中…';
   showPanel(lobbyEl);
   net.connect(wsUrl());
+}
+
+function onNetClose(): void {
+  if (mode !== 'online') return;
+  // FR-N4：断线自动重连（同名接管），超过次数或无昵称时回菜单
+  if (rejoinName && reconnectAttempts < RECONNECT_MAX) {
+    reconnectAttempts++;
+    showPanel(null);
+    overlayTitle.textContent = '连接中断';
+    overlayText.textContent = `正在重连（${reconnectAttempts}/${RECONNECT_MAX}）…`;
+    overlay.classList.add('show');
+    reconnectTimer = window.setTimeout(() => {
+      if (mode === 'online') connectAndJoin();
+    }, RECONNECT_DELAY_MS);
+    return;
+  }
+  showMenu('与服务器断开连接');
 }
 
 function handleNetMessage(msg: S2CMessage): void {
@@ -257,6 +298,7 @@ function handleNetMessage(msg: S2CMessage): void {
   switch (msg.t) {
     case 'welcome':
       myConnId = msg.connId;
+      reconnectAttempts = 0; // 重连成功：重置自动重连计数
       break;
     case 'start': {
       // 开局：按服务器指定地图重建本地地形视图
@@ -265,6 +307,7 @@ function handleNetMessage(msg: S2CMessage): void {
       onlineMap = mapByName(msg.map) ?? MAPS[0]!;
       terrain = new TerrainView(onlineMap);
       buffer.clear();
+      renderer.clearFx(); // 清理上一局残留的爆炸特效
       feed = [];
       break;
     }
@@ -418,7 +461,7 @@ function renderOnline(): void {
     audio.engine(roomPhase === 'playing' && mine !== undefined && mine.alive && mine.moving);
   }
 
-  const s: Snapshot | null = buffer.sample(INTERP_DELAY);
+  const s: Snapshot | null = buffer.sample(INTERP_DELAY, myTankId >= 0 ? myTankId : undefined);
   if (s) {
     renderer.render({
       tick: s.tick,
@@ -605,6 +648,27 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('pagehide', () => {
   if (mode === 'online') net.send({ t: 'input', mask: 0 });
 });
+
+// ---- Esc / HUD 按钮：确认后返回主菜单（单机退出本局；联机断开连接） ----
+const btnMenu = document.getElementById('btn-menu')!;
+
+function requestExitToMenu(): void {
+  if (mode === 'menu') return;
+  const tip = mode === 'single' ? '退出本局并返回主菜单？' : '断开连接并返回主菜单？';
+  if (!window.confirm(tip)) return;
+  showMenu();
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Escape' || keys.capturing !== null) return; // 改键捕获中不触发
+  const el = document.activeElement;
+  if (el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement) return;
+  requestExitToMenu();
+});
+btnMenu.addEventListener('click', requestExitToMenu);
+
+// 会话内回填上次联机昵称（FR-N4：刷新后仍可同名重连接管）
+try { nickInput.value = sessionStorage.getItem(NICK_KEY) ?? ''; } catch { /* 存储不可用时忽略 */ }
 
 let last = performance.now();
 let acc = 0;

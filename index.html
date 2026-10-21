@@ -32,10 +32,14 @@
     #overlay { z-index: 5; }
     #menu, #lobby {
       position: absolute; inset: 0; z-index: 2;
-      display: none; flex-direction: column; align-items: center; justify-content: center;
+      display: none; flex-direction: column; align-items: center;
       gap: 14px; background: rgba(10, 10, 10, 0.94); text-align: center; padding: 20px;
+      overflow-y: auto; /* 小窗口（1x 缩放）内容超高时面板内滚动，不再溢出画布 */
     }
     #menu.show, #lobby.show { display: flex; }
+    /* 自动外边距居中：内容放得下时垂直居中，放不下时可完整滚动（避免 flex 居中裁掉顶部） */
+    #menu > :first-child, #lobby > :first-child { margin-top: auto; }
+    #menu > :last-child, #lobby > :last-child { margin-bottom: auto; }
     #menu h1 { color: #e8c838; font-size: 30px; letter-spacing: 3px; }
     #lobby h2 { color: #e8c838; font-size: 16px; }
     .panel-hint { color: #777; font-size: 12px; }
@@ -56,6 +60,11 @@
     #cfg-row, #single-cfg { display: flex; gap: 14px; font-size: 13px; align-items: center; flex-wrap: wrap; justify-content: center; }
     #cfg-row select, #single-cfg select { background: #111; color: #ddd; border: 1px solid #555; font-family: inherit; padding: 3px 6px; }
     #round-timer { font-size: 16px; color: #e8c838; font-weight: bold; letter-spacing: 1px; }
+    #btn-menu {
+      background: #6b6b6b; color: #fff; border: 0; padding: 6px 14px;
+      font-family: inherit; font-size: 12px; cursor: pointer; margin-top: 6px;
+    }
+    #btn-menu:hover { background: #8a8a8a; }
     #chat-log {
       width: 270px; height: 96px; overflow-y: auto; background: #111; border: 1px solid #444;
       font-size: 12px; text-align: left; padding: 4px 8px; display: flex; flex-direction: column; gap: 2px;
@@ -95,7 +104,7 @@
       display: none; align-items: center; justify-content: center;
       background: rgba(0, 0, 0, 0.82); pointer-events: none;
     }
-    #scoreboard.show { display: flex; }
+    #scoreboard.show { display: flex; z-index: 6; /* 倒计时覆盖层(z5)之上：countdown 阶段按 Tab 也可查看 */ }
     #scoreboard table { border-collapse: collapse; font-size: 14px; }
     #scoreboard th, #scoreboard td { padding: 4px 14px; text-align: left; border-bottom: 1px solid #333; }
     #scoreboard th { color: #e8c838; font-size: 12px; }
@@ -204,10 +213,12 @@
       <ul id="feed"></ul>
       <div id="help">
         操作：方向键 / WASD 移动，空格 / J 射击（主菜单可自定义键位）<br />
-        对局中按 1~5 发送快捷短语 · 按 Tab 查看计分板 · 按 R 重新开始（单机）<br />
+        对局中按 1~5 发送快捷短语 · 按 Tab 查看计分板 · 按 R 重新开始（单机，同一地图）<br />
+        按 Esc 或点「返回主菜单」退出当前对局 / 断开连接（需确认）<br />
         默认先达 1000 分获胜、限时 8 分钟（房主可在房间内配置）<br />
-        击毁闪红坦克会掉落道具
+        击毁闪红坦克会掉落道具 · 断线后自动重连（同名接管原坦克）
       </div>
+      <button id="btn-menu">返回主菜单</button>
     </div>
   </div>
   <script type="module" src="/client/main.ts"></script>

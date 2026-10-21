@@ -20,9 +20,11 @@
 4. **逻辑与渲染分离**：`shared/` 纯逻辑模块（实体、碰撞、地图）不依赖 DOM/Node API，可被 Vitest headless 测试。
 5. **状态机驱动流程**：客户端（Menu → Lobby → Playing，无独立 Result 状态，结算用覆盖层展示）与房间（Waiting → Countdown → Playing → RoundEnd）均为显式状态机，消息只允许合法状态迁移。
 6. **稳定性不变量（2026-10-21 审查确立）**：① 出生点唯一分配（地图 8 个 spawns + `findFreeSpot()` 兜底）；② 一切半格吸附必须过 `trySnap()` 碰撞校验；③ 范围伤害（炸弹）尊重护盾；④ 广播只发已加入成员；⑤ HTTP 输入解析/读文件必须 try/catch + `path.relative` 防逃逸；⑥ 重连必须同步地图与完整地形（lobbyState.map/terrain）；⑦ tick 循环 onTick 异常跳帧继续（finally 重调度），连续异常过多才停止；⑧ L3 砖墙以命中砖格所属 2×2 大格为锚（四方向一致）；⑨ 静态资源（带扩展名）缺失/逃逸一律 404，不回落 SPA；⑩ WS 握手校验 Origin（同源或 localhost），maxPayload 4KB、连接上限 32。
+7. **稳定性不变量（2026-10-21 二轮审查新增）**：⑪ 客户端断线自动重连（≤3 次、间隔 1s、昵称 sessionStorage 持久化；接管仍以同名匹配），countdown/playing/roundEnd 断线均保留席位、60s 超时判离场；⑫ 本机坦克航位推算（最新快照 + 方向×速度外推 ≤1 tick），其余坦克 2 帧插值（NFR-2 延迟预算 35~50ms）；⑬ FR-N3 配置范围服务端强校验（scoreCap 300~5000 / roundMinutes 1~30）；⑭ WS Origin 回环限定（回环 Origin 仅当请求 Host 也为回环时放行，`server/origin.ts`）；⑮ 自定义键位冲突用「交换」语义，保证任意时刻动作按键唯一；⑯ 大厅面板内容超高时面板内滚动（overflow-y + 首尾 margin:auto 居中）。
 
 ## 组件关系
 - `Room`（server/room.ts，房间管理 + 消息路由 + 托管/重连）
+- `originAllowed`（server/origin.ts，WS 握手 Origin 校验）
 - `BattleSim`（单局模拟：实体、碰撞、道具、计分）+ `BotController`（shared/sim/bot.ts，AI）
 - `main.ts` / `NetClient` / `SnapshotBuffer` / `TerrainView`（client/：连接管理、输入采集、快照插值、地形视图、渲染、音频）
 - `MapLoader`（shared/map/loader.ts，JSON 关卡 ↔ 网格数据 + 严格校验）

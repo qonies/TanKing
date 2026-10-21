@@ -129,8 +129,8 @@ export class Room {
     this.lastInputTick.delete(connId); // 防止长会话下 Map 无限增长
     const member = this.members.get(connId);
     if (!member) return;
-    // FR-N4：对局中断线 → 成员保留、坦克 AI 托管，60s 内同名重连可接管
-    if (this.sim && (this.phase === 'countdown' || this.phase === 'playing') && member.tankId >= 0) {
+    // FR-N4：对局/结算阶段断线 → 成员保留、坦克 AI 托管，60s 内同名重连可接管
+    if (this.sim && (this.phase === 'countdown' || this.phase === 'playing' || this.phase === 'roundEnd') && member.tankId >= 0) {
       member.online = false;
       member.offlineTicks = 0;
       this.hostBot(member.tankId);
@@ -221,8 +221,8 @@ export class Room {
     if (!conn || this.members.has(connId)) return;
     const name = (typeof rawName === 'string' ? rawName : '').trim().slice(0, 12) || `玩家${connId}`; // 昵称校验（NFR-6）
 
-    // 对局中仅允许断线成员同名重连接管（FR-N4）；其余拒绝，避免产生无坦克的幽灵玩家
-    if (this.phase === 'countdown' || this.phase === 'playing') {
+    // 对局/结算阶段仅允许断线成员同名重连接管（FR-N4）；其余拒绝，避免产生无坦克的幽灵玩家
+    if (this.phase === 'countdown' || this.phase === 'playing' || this.phase === 'roundEnd') {
       const gone = [...this.members.values()].find((m) => !m.online && m.name === name && m.tankId >= 0);
       if (!gone) {
         conn.send({ t: 'error', message: '对局进行中，请等待下一局再加入' });
@@ -330,11 +330,13 @@ export class Room {
     }
     if (scoreCap !== undefined && scoreCap !== null) {
       const n = Math.round(Number(scoreCap));
-      if (Number.isFinite(n) && n >= 100) this.cfgScoreCap = Math.min(9999, n);
+      // PRD FR-N3 口径：积分上限 300~5000（服务端强校验，防止改包客户端设出策略外数值）
+      if (Number.isFinite(n)) this.cfgScoreCap = Math.min(5000, Math.max(300, n));
     }
     if (roundMinutes !== undefined && roundMinutes !== null) {
       const n = Math.round(Number(roundMinutes));
-      if (Number.isFinite(n) && n >= 1) this.cfgTimeTicks = Math.min(60, n) * 60 * TICK_RATE;
+      // PRD FR-N3 口径：回合时长 1~30 分钟
+      if (Number.isFinite(n)) this.cfgTimeTicks = Math.min(30, Math.max(1, n)) * 60 * TICK_RATE;
     }
     if (typeof powerups === 'boolean') {
       this.cfgPowerups = powerups;
@@ -404,7 +406,8 @@ export class Room {
       // 重连同步：当前地图 + 完整地形（含已破坏砖墙/铁锹钢墙），客户端据此重建 TerrainView
       map: inGame ? this.sim!.map.name : undefined,
       terrain: inGame ? Array.from(this.sim!.map.terrain) : undefined,
-      ticksLeft: this.phase === 'playing' && this.sim ? this.sim.remainingTicks : null,
+      // 回合剩余（与快照口径一致：不限时为 null）
+      ticksLeft: this.phase === 'playing' && this.sim && this.sim.remainingTicks > 0 ? this.sim.remainingTicks : null,
       // 回合结算（FR-U4）：排名 + 击杀/死亡
       roundResult: this.phase === 'roundEnd' && this.sim
         ? {

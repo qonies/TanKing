@@ -1,7 +1,7 @@
 # 进度（Progress）
 
 ## 状态
-**M1~M5 完成 + 发布前复审修复（2026-10-21）**：version 0.6.0，112/112 测试通过（含复审新增 14 例回归），tsc 0 错误，性能验证达标（全链路 tick avg 0.015ms / 快照 1.44KB）。项目进入发布状态。
+**M1~M5 完成 + 两轮审查修复（2026-10-21）**：version 0.6.1，**121/121 测试通过**（9 文件），`tsc --noEmit` 0 错误，覆盖率实测 92.1%（sim 96.5% / room 99.4%），性能验证达标（全链路 tick avg ≈0.013ms / 快照 1.44KB，口径含 AI 决策与序列化）。第二轮审查修复落地：断线自动重连（FR-N4 客户端侧 ≤3 次自动 + 昵称会话持久化 + 同名接管）、本机坦克航位推算（NFR-2 延迟预算 35~50ms）、单机/联机 Esc 与 HUD「返回主菜单」、大厅小窗口滚动布局（1x 缩放不溢出）、倒计时阶段 Tab 计分板可见（z-index）、FR-N3 配置范围服务端强校验（scoreCap 300~5000 / roundMinutes 1~30）、结算阶段断线保留席位、自定义键位冲突改「交换」、WS Origin 回环限定收紧（抽出 `server/origin.ts`）。**发布验收口径：功能完成；正式发布以 L4 真机联机清单执行完毕为准。**
 
 ## 里程碑规划
 - [x] **M0 规划**：需求文档、技术路线、测试文档（已完成并评审确认，D1~D6 采用默认方案）
@@ -32,6 +32,12 @@
   - 健壮性：loader 出生点矩形/基地重叠校验、铁锹贴边越界修复、Room 入参与配置守卫、lastInputTick 清理、WS Origin 校验/maxPayload/连接上限、HTTP 异步 + 资源 404 语义、快照帧间分数插值、perf 计时口径修正（avg 0.015ms 含 AI+序列化）、构建戳记 + deploy 总是重建、tsx 移入 dependencies。
   - 文档：PRD v0.6 / 技术路线 v0.4 / 测试文档 v0.4 / 参数对照表（定稿 + §4）/ README / memory-bank 同步；真实服务器冒烟（HTTP 200 / 同源 join / 跨源 401）通过。
 - [ ] **发布后可选增强**（不阻塞发布）：E2E Playwright（浏览器下载受环境限制）、FC 模拟器逐帧像素比对、正式像素素材（sprite sheet）、FR-T4 等级移动速度差异档、L4 手工联机清单执行
+- [x] **第二轮审查修复**（2026-10-21，当前阶段）：文档↔代码全面复审后修复 9 项，121/121 全绿，version 0.6.1——
+  - **P1**：① 断线自动重连（client/main.ts：`onClose` → ≤3 次、间隔 1s 自动以会话昵称重连，覆盖层显示进度；`sessionStorage` 持久化昵称，刷新可同名接管）；② NFR-2 延迟预算（client/interp.ts：本机坦克在最新快照上沿移动方向外推 ≤1 tick 的航位推算，其余坦克保持 2 帧插值；技术路线 §4.3 补延迟预算表）；③ FR-N3 配置范围强校验（room.ts：scoreCap 300~5000 / roundMinutes 1~30 夹取，PRD 口径对齐）；④ 单机/联机 Esc + HUD「返回主菜单」（确认后退出，修复对局中无法改配置/回菜单）；⑤ 大厅 `#menu/#lobby` 面板内滚动 + 自动外边距居中（1366×768 / 1x 缩放下不再溢出画布）；⑥ 倒计时阶段 Tab 计分板可见（`#scoreboard.show` z-index 6 > overlay 5）。
+  - **P2**：⑦ 结算（roundEnd）阶段断线保留席位、同名可接管（room.ts removeConnection/join 条件扩展）；⑧ 自定义键位冲突改「交换」语义（input.ts，修复重复绑定导致动作不可达；删除未用的 FALLBACK_BINDS）；⑨ `lobbyState.ticksLeft` 与快照口径统一（不限时 = null）；⑩ 单机地图 R 重开保持同一张（进入单机时才随机换图）；⑪ gameLoop 用例 `vi.spyOn(console,'error')` 静音（修复 PowerShell 下 stderr 误报失败）；⑫ `tsconfig` include `scripts`（perf.ts 纳入类型检查）；⑬ WS Origin 校验收紧并抽出 `server/origin.ts`（回环 Origin 仅在请求 Host 也为回环时放行，防本机其他端口页面跨站连接）；⑭ 快照事件残留 `renderer.clearFx()`。
+  - **测试**：新增 9 例（fixes：配置范围夹取 / roundEnd 重连 / Origin 2 例；新增 tests/client-interp.test.ts：航位推算 3 例 + TerrainView 2 例），总计 112 → 121。
+  - **文档同步**：PRD v0.7（FR-N3 强校验 / FR-N4 自动重连 / FR-T4 标注 / 发布验收口径）、技术路线 v0.5（目录树、§4.3 延迟预算与自动重连、素材章节）、测试文档 v0.5（DoD 口径、L4 清单）、参数对照表 §4（9 行二轮修复记录）、README（状态/操作说明/联机说明）；memory-bank 同步。
+  - **验证**：tsc 0 错误、121/121、覆盖率 92.1%、perf avg ≈0.013ms / 1.44KB、`npm run build` 通过、真实服务器冒烟（HTTP 200 / 资源 404）通过。
 
 ## 已完成
 - 记忆库建立（projectbrief / productContext / techContext / systemPatterns / activeContext / progress）
@@ -49,8 +55,8 @@
 ## 已知问题 / 风险
 - 原版手感逐帧像素比对（需 FC 模拟器）未执行，M5 已将 ⚠️ 近似项作为明确设计决策定稿（参数对照表 M5 结论），列为发布后可选增强。
 - E2E Playwright 未落地（浏览器下载受环境限制），以 HTTP/WS 冒烟 + 集成测试替代；后续可补。
-- L4 手工联机清单（真机局域网 ≥3 设备、延迟录屏测量、多浏览器兼容）未执行，发布验收前建议跑一轮。
+- L4 手工联机清单（真机局域网 ≥3 设备、延迟录屏测量、多浏览器兼容）未执行，**为正式发布验收的最后一项**；NFR-2 延迟已引入本机坦克航位推算（理论预算 35~50ms），实测待 L4 录屏。
 - 素材为占位色块，正式像素素材（sprite sheet）待制作。
-- 断线托管为「同名重连」尽力而为方案：无账号/令牌机制，同名即接管（PRD FR-N4 允许；同名成员互冒风险已知）。
+- 断线托管为「同名重连」尽力而为方案：无账号/令牌机制，同名即接管（PRD FR-N4 允许；同名成员互冒风险已知）。二轮审查已加客户端自动重连（≤3 次）与昵称会话持久化，刷新页面后可回填同名接管。
 - 房间为单实例（单房间），多房间不在本期范围。
-- 客户端模块（renderer/interp/audio/input/net/main）无单元测试（coverage 仅含 shared/server），由 L2 集成 + 冒烟覆盖，E2E 落地后可补 DOM 断言。
+- 客户端模块 renderer/audio/input/net/main 无单元测试（coverage 仅含 shared/server；client/interp.ts 已有 5 例单测），由 L2 集成 + 冒烟覆盖，E2E 落地后可补 DOM 断言。

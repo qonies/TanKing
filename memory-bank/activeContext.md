@@ -1,7 +1,7 @@
 # 当前工作上下文（Active Context）
 
 ## 当前阶段
-**M1~M5 完成 + 发布前复审修复（2026-10-21）**：version 0.6.0，112/112 测试通过，`tsc --noEmit` 0 错误，性能验证达标（全链路 tick avg 0.015ms / 快照 1.44KB，口径含 AI 决策与序列化）。复审修复落地：L3 砖墙四方向整格摧毁、结算画面可见 + 完整排名与 MVP、HUD 回合倒计时、房主回合规则/道具开关配置（FR-N3 全量）、单机坦克数与 AI 难度配置（FR-O1）、AI 概率性攻打基地（FR-A2）、履带声、快照帧间分数插值、tick 循环异常容错、WS Origin 校验/maxPayload、HTTP 资源 404 语义、loader 出生点/基地重叠校验、铁锹贴边越界修复、测试自包含。剩余为发布后可选增强（E2E Playwright、FC 模拟器逐帧比对、像素素材、FR-T4 速度档、L4 手工联机清单执行）。
+**M1~M5 完成 + 两轮审查修复（2026-10-21）**：version 0.6.1，**121/121 测试通过**（9 文件），`tsc --noEmit` 0 错误，覆盖率实测 92.1%（sim 96.5% / room 99.4%），性能验证达标（全链路 tick avg ≈0.013ms / 快照 1.44KB）。发布前复审修复（第一轮）与第二轮审查修复均已落地——第二轮：断线自动重连（FR-N4 客户端侧 ≤3 次自动 + 昵称 sessionStorage 持久化 + 同名接管）、本机坦克航位推算（NFR-2 延迟预算 35~50ms）、单机/联机 Esc 与 HUD「返回主菜单」、大厅小窗口滚动布局、倒计时阶段 Tab 计分板可见、FR-N3 配置范围服务端强校验（300~5000 / 1~30）、结算（roundEnd）阶段断线保留席位、自定义键位冲突改「交换」、WS Origin 回环限定收紧（抽出 `server/origin.ts`）。**发布验收口径：功能完成，正式发布以 L4 真机联机清单执行完毕为准。** 剩余为发布后可选增强（E2E Playwright、FC 模拟器逐帧比对、像素素材、FR-T4 速度档、L4 清单执行）。
 
 ## 已确认的关键决策
 1. 核心玩法：**PvP 死亡竞技**（用户选定）。
@@ -75,6 +75,12 @@
   - **健壮性**：⑩ loader 出生点 2×2 矩形重叠 / 出生点-基地重叠校验；⑪ 铁锹环绕格越界过滤（修复 Uint8Array 越界回绕写坏地形）；⑫ lastInputTick 断线/重连/超时清理；⑬ Room 构造校验地图非空、opts.maxTanks clamp 2~8、join 非字符串昵称守卫、config null 值忽略；⑭ WS Origin 校验（拒绝跨站 CSWSH）+ maxPayload 4KB + 连接上限 32；⑮ HTTP 改 fs/promises 异步、带扩展名资源缺失/逃逸 404 不回落 SPA；⑯ 快照插值改为「最新 tick − 2 + tick 内时间分数」实现真正帧间插值；⑰ perf 计时口径覆盖 AI + 序列化（avg 0.015ms / 1.44KB）；⑱ 构建戳记 dist/build-info.json + check-dist 校验 + deploy 总是重建；⑲ tsx 移入 dependencies。
   - **文档同步**：PRD v0.6、技术路线 v0.4、测试文档 v0.4、参数对照表（⚠️ 状态定稿 + 新增 §4 复审记录）、README；memory-bank 同步。
   - 新增回归：tests/fixes.test.ts 14 例（L3 四方向 3、铁锹贴边 1、FR-N3 2、loader 2、Room 4、gameLoop 1、AI 基地 1）+ server.test 快照 ticksLeft 契约；真实服务器冒烟通过（HTTP 200 / 同源 join welcome / 跨源 Origin 401 拒绝）。
+- [x] **第二轮审查修复（2026-10-21，当前阶段）**：文档↔代码复审全量修复，121/121 全绿，version 0.6.1：
+  - **P1**：① 断线自动重连（client/main.ts：`connectAndJoin()`/`onNetClose()`，≤3 次、间隔 1s、覆盖层进度；昵称 `sessionStorage['tanking-nick']` 持久化与回填）；② 本机坦克航位推算（client/interp.ts：`SnapshotBuffer` 可注入时钟 + `sample(delay, localTankId)`，本机坦克在最新快照上按 `DIR_VEC[dir]×TANK_SPEED×frac` 外推 ≤1 tick；技术路线 §4.3 延迟预算表）；③ FR-N3 配置范围强校验（server/room.ts：scoreCap 300~5000 / roundMinutes 1~30 夹取）；④ Esc + HUD `#btn-menu` 确认返回主菜单（index.html 新增按钮/样式）；⑤ `#menu/#lobby` `overflow-y:auto` + 首尾 `margin:auto` 居中（1x 缩放不溢出）；⑥ `#scoreboard.show{z-index:6}`（倒计时 Tab 可见）。
+  - **P2**：⑦ roundEnd 断线保留席位 + 同名接管（room.ts removeConnection/join 条件含 roundEnd）；⑧ 键位冲突改交换（client/input.ts setBind，删除 FALLBACK_BINDS）；⑨ `lobbyState.ticksLeft` 不限时 = null（与快照一致）；⑩ 单机 R 重开保持同图（`singleMapIndex`）；⑪ gameLoop 测试 spy console.error；⑫ tsconfig include `scripts`；⑬ Origin 校验抽 `server/origin.ts` 并收紧回环限定；⑭ 'start' 时 `renderer.clearFx()`。
+  - **测试**：新增 9 例（fixes 3 + Origin 2；tests/client-interp.test.ts 5：航位推算 3 + TerrainView 2）；总计 112 → 121；`npm test` 不再有 stderr 噪音。
+  - **文档**：PRD v0.7、技术路线 v0.5、测试文档 v0.5、参数对照表 §4、README、memory-bank 全量同步；版本 0.6.0 → 0.6.1。
+  - **验证**：tsc 0 错误、121/121、覆盖率 92.1%、`npm run build` 通过、真实服务器冒烟（HTTP 200 / 资源 404）通过。
 - [ ] **发布后可选增强**（不阻塞发布）：E2E Playwright、FC 模拟器逐帧像素比对、正式像素素材、FR-T4 等级移动速度差异档、L4 手工联机清单执行（真机局域网验收）
 
 ## M1 实现要点（后续开发需遵守）
