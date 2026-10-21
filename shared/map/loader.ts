@@ -86,6 +86,28 @@ export function loadMap(def: MapDef): LoadedMap {
     }
   }
 
+  // 出生点 2×2 矩形之间不得重叠（否则开局多辆坦克互相卡死）
+  const spawnRects = def.spawns.map((p) => ({ x0: p.x, y0: p.y, x1: p.x + 1, y1: p.y + 1 }));
+  for (let i = 0; i < spawnRects.length; i++) {
+    for (let j = i + 1; j < spawnRects.length; j++) {
+      const a = spawnRects[i]!;
+      const b = spawnRects[j]!;
+      if (a.x0 <= b.x1 && b.x0 <= a.x1 && a.y0 <= b.y1 && b.y0 <= a.y1) {
+        throw new Error(`地图 "${def.name}" 出生点矩形重叠: (${a.x0}, ${a.y0}) 与 (${b.x0}, ${b.y0})`);
+      }
+    }
+  }
+
+  // 出生点不得与基地 2×2 重叠
+  if (def.base) {
+    for (const p of def.spawns) {
+      if (p.x <= def.base.x + 1 && def.base.x <= p.x + 1 &&
+          p.y <= def.base.y + 1 && def.base.y <= p.y + 1) {
+        throw new Error(`地图 "${def.name}" 出生点 (${p.x}, ${p.y}) 与基地重叠`);
+      }
+    }
+  }
+
   // 基地：2×2 范围不得被实体地形或树林覆盖（否则渲染与碰撞语义冲突）
   if (base && def.base) {
     for (let y = def.base.y; y < def.base.y + 2; y++) {

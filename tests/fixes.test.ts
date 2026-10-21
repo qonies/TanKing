@@ -1,16 +1,21 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { fileURLToPath } from 'node:url';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createHttpServer } from '../server/http';
+import { startTickLoop } from '../server/gameLoop';
 import { Room, type Conn } from '../server/room';
 import { loadMap } from '../shared/map/loader';
 import { BattleSim } from '../shared/sim/sim';
+import { BotController } from '../shared/sim/bot';
 import { MAPS } from '../shared/maps';
+import { mulberry32 } from '../shared/rng';
 import {
-  Dir, INPUT_DOWN, INPUT_LEFT, INPUT_RIGHT, INPUT_UP, SHOVEL_TICKS, TICK_RATE,
+  CELL, Dir, INPUT_DOWN, INPUT_FIRE, INPUT_LEFT, INPUT_RIGHT, INPUT_UP, SHOVEL_TICKS, TICK_RATE,
 } from '../shared/constants';
 import { PowerupType, TerrainType, type MapDef } from '../shared/types';
 import type { S2CMessage } from '../shared/protocol';
-import { makeMap, makeSim, TWO_SPAWNS } from './helpers';
+import { makeMap, makeSim, EMPTY_ROW, TWO_SPAWNS } from './helpers';
 
 type LobbyMsg = Extract<S2CMessage, { t: 'lobbyState' }>;
 type TerrainSetEvt = Extract<ReturnType<BattleSim['drainEvents']>[number], { type: 'terrainSet' }>;
@@ -262,22 +267,207 @@ describe('P2 修复：地图加载校验', () => {
 });
 
 describe('P2 修复：HTTP 服务健壮性', () => {
-  const server = createHttpServer(fileURLToPath(new URL('../dist', import.meta.url)));
-  afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  // 自包含：不依赖 dist 构建产物（干净 checkout 上 npm test 也能通过）
+  const distDir = mkdtempSync(join(tmpdir(), 'tanking-http-'));
+  writeFileSync(join(distDir, 'index.html'), '<html><body>SPA</body></html>');
+  writeFileSync(join(distDir, 'app.js'), 'console.log(1)');
+  const server = createHttpServer(distDir);
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    rmSync(distDir, { recursive: true, force: true });
+  });
 
-  it('畸形 URL 返回 400；正常请求 200；路径逃逸不泄露外部文件', async () => {
+  it('畸形 URL 返回 400；正常请求 200；逃逸与缺失资源不泄露外部文件', async () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as { port: number }).port;
+    const get = async (p: string) => fetch(`http://127.0.0.1:${port}${p}`);
 
-    const bad = await fetch(`http://127.0.0.1:${port}/%E0%A4%A`); // 旧实现会抛 URIError 打崩进程
+    const bad = await get('/%E0%A4%A'); // 旧实现会抛 URIError 打崩进程
     expect(bad.status).toBe(400);
 
-    const ok = await fetch(`http://127.0.0.1:${port}/`);
+    const ok = await get('/');
     expect(ok.status).toBe(200);
+    expect(await ok.text()).toContain('SPA');
 
-    const escaped = await fetch(`http://127.0.0.1:${port}/..%2f..%2fpackage.json`);
-    expect([200, 404]).toContain(escaped.status); // 回落 index.html
-    expect(await escaped.text()).not.toContain('"name"'); // 绝不读到 dist 之外
+    const missingJs = await get('/missing.js');
+    expect(missingJs.status).toBe(404); // 资源缺失不回落 SPA（避免 MIME 混淆）
+
+    const escaped = await get('/..%2f..%2fpackage.json');
+    expect(escaped.status).toBe(404); // 逃逸路径直接 404
+    expect(await escaped.text()).not.toContain('"name"'); // 绝不读到目录之外
+  });
+});
+
+// ---------------------------------------------------------------- 复审修复（2026-10-21）
+
+/** 构造一次射击场景：坦克位于 (tankX, tankY) 朝 dir 开火，砖墙位于指定行/列 */
+function fireSetup(
+  dir: Dir, level: number, tankX: number, tankY: number,
+  brickRows: number[], brickCols: number[],
+): BattleSim {
+  const rows = Array.from({ length: 26 }, () => EMPTY_ROW);
+  for (const y of brickRows) {
+    const r = [...rows[y]!];
+    for (const x of brickCols) r[x] = 'B';
+    rows[y] = r.join('');
+  }
+  const sim = new BattleSim(
+    makeMap(rows, [{ x: Math.floor(tankX / CELL), y: Math.floor(tankY / CELL) }]),
+    [{ name: 'A' }], { seed: 1 },
+  );
+  const a = sim.tanks[0]!;
+  a.level = level;
+  a.x = tankX;
+  a.y = tankY;
+  a.dir = dir;
+  a.shieldTicks = 0;
+  sim.setInput(0, INPUT_FIRE);
+  sim.step();
+  sim.setInput(0, 0);
+  for (let i = 0; i < 30; i++) sim.step();
+  return sim;
+}
+
+describe('修复：L3 砖墙四方向整大格摧毁（FR-M1，旧实现向右/向下完全无效）', () => {
+  it('向右射击摧毁命中砖格所属的 2×2 大格', () => {
+    const sim = fireSetup(Dir.Right, 3, 16 * CELL, 10 * CELL, [10, 11], [22, 23]);
+    for (const [cx, cy] of [[22, 10], [23, 10], [22, 11], [23, 11]] as const) {
+      expect(sim.terrainAt(cx, cy)).toBe(TerrainType.Empty);
+    }
+  });
+
+  it('向下射击摧毁命中砖格所属的 2×2 大格', () => {
+    const sim = fireSetup(Dir.Down, 3, 10 * CELL, 16 * CELL, [20, 21], [10, 11]);
+    for (const [cx, cy] of [[10, 20], [11, 20], [10, 21], [11, 21]] as const) {
+      expect(sim.terrainAt(cx, cy)).toBe(TerrainType.Empty);
+    }
+  });
+
+  it('L0 行为不变：仅命中格损毁，深度之外保留', () => {
+    const sim = fireSetup(Dir.Right, 0, 16 * CELL, 10 * CELL, [10, 11], [22, 23]);
+    expect(sim.terrainAt(22, 10)).toBe(TerrainType.Empty);
+    expect(sim.terrainAt(23, 10)).toBe(TerrainType.Brick);
+  });
+});
+
+describe('修复：铁锹贴边基地不越界写地形（FR-P5）', () => {
+  it('基地在左上角时只修改场内小格，到期恢复原状', () => {
+    const def = makeMap(Array.from({ length: 26 }, () => EMPTY_ROW), [{ x: 4, y: 24 }]);
+    def.base = { x: 0, y: 0 };
+    const sim = new BattleSim(def, [{ name: 'A' }], { seed: 1 });
+    const a = sim.tanks[0]!;
+    sim.powerups.push({ id: 1, type: PowerupType.Shovel, x: a.x, y: a.y });
+    sim.step();
+    expect(sim.terrainAt(2, 0)).toBe(TerrainType.Steel);  // 场内环绕格生效
+    expect(sim.terrainAt(25, 0)).toBe(TerrainType.Empty); // 场外小格不回绕写坏 row0 末列
+    expect(sim.terrainAt(25, 1)).toBe(TerrainType.Empty);
+    for (let i = 0; i < SHOVEL_TICKS; i++) sim.step();
+    expect(sim.terrainAt(2, 0)).toBe(TerrainType.Empty); // 到期恢复
+  });
+});
+
+describe('修复：FR-N3 回合规则与道具开关', () => {
+  it('房主可配置积分上限 / 回合时长 / 道具开关并随 lobbyState 下发；快照携带 ticksLeft', () => {
+    const { room, a } = joinedRoom(2);
+    room.handleMessage(2, { t: 'config', scoreCap: 300 }); // 非房主无效
+    expect(a.last('lobbyState')!.scoreCap).toBe(1000);
+
+    room.handleMessage(1, { t: 'config', scoreCap: 300, roundMinutes: 2, powerups: false });
+    const lobby = a.last('lobbyState')!;
+    expect(lobby.scoreCap).toBe(300);
+    expect(lobby.roundMinutes).toBe(2);
+    expect(lobby.powerups).toBe(false);
+
+    room.handleMessage(1, { t: 'start' });
+    for (let i = 0; i < 3 * TICK_RATE + 3; i++) room.step();
+    const snap = a.snapshots[a.snapshots.length - 1]!;
+    expect(typeof snap.ticksLeft).toBe('number');
+    expect(snap.ticksLeft!).toBeLessThanOrEqual(2 * 60 * TICK_RATE);
+    expect(snap.ticksLeft!).toBeGreaterThan(2 * 60 * TICK_RATE - 200);
+  });
+
+  it('道具开关关闭：无定点刷新、闪红不掉落', () => {
+    const sim = new BattleSim(
+      makeMap([], [{ x: 4, y: 24 }, { x: 4, y: 12 }]),
+      [{ name: 'A' }, { name: 'B', isBot: true, bonus: true }],
+      { seed: 7, powerupInterval: 1, powerups: false },
+    );
+    sim.tanks[1]!.shieldTicks = 0;
+    sim.setInput(0, INPUT_FIRE);
+    for (let i = 0; i < 120; i++) sim.step();
+    expect(sim.powerups.length).toBe(0);
+  });
+});
+
+describe('修复：loader 出生点/基地重叠校验', () => {
+  it('出生点 2×2 矩形重叠时抛错', () => {
+    expect(() => loadMap(makeMap([], [{ x: 4, y: 4 }, { x: 5, y: 4 }]))).toThrow(/重叠/);
+  });
+
+  it('出生点与基地重叠时抛错', () => {
+    const def = makeMap([], [{ x: 4, y: 24 }]);
+    def.base = { x: 4, y: 24 };
+    expect(() => loadMap(def)).toThrow(/与基地重叠/);
+  });
+});
+
+describe('修复：Room 输入与配置健壮性', () => {
+  it('空地图数组直接抛配置错误', () => {
+    expect(() => new Room([], { maxTanks: 2 })).toThrow(/地图/);
+  });
+
+  it('opts.maxTanks 越界被夹取到 2~8', () => {
+    const room = new Room([makeMap([], TWO_SPAWNS)], { maxTanks: 99 });
+    const a = new FakeConn(1);
+    room.addConnection(a);
+    room.handleMessage(1, { t: 'join', name: 'A' });
+    expect(a.last('lobbyState')!.maxTanks).toBe(8);
+  });
+
+  it('非字符串昵称不崩溃并使用默认昵称', () => {
+    const { room, a } = joinedRoom(3);
+    const c = new FakeConn(3);
+    room.addConnection(c);
+    expect(() => room.handleMessage(3, { t: 'join', name: 42 as never })).not.toThrow();
+    expect(a.last('lobbyState')!.players.some((p) => p.name === '玩家3')).toBe(true);
+  });
+
+  it('config 传 null 的 maxTanks 不生效', () => {
+    const { room, a } = joinedRoom(2);
+    room.handleMessage(1, { t: 'config', maxTanks: null as never });
+    expect(a.last('lobbyState')!.maxTanks).toBe(2);
+  });
+});
+
+describe('修复：gameLoop tick 异常容错（NFR-5）', () => {
+  it('onTick 抛异常后循环继续推进（不再永久停摆）', async () => {
+    let n = 0;
+    const stop = startTickLoop(2, () => {
+      n++;
+      if (n === 3) throw new Error('boom');
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    stop();
+    expect(n).toBeGreaterThan(5);
+  });
+});
+
+describe('修复：AI 基地嗅探（FR-A2）', () => {
+  it('困难档无敌人可追踪时逼近中立基地', () => {
+    const def = makeMap(Array.from({ length: 26 }, () => EMPTY_ROW), [{ x: 4, y: 24 }]);
+    def.base = { x: 12, y: 12 };
+    const sim = new BattleSim(def, [{ name: 'Bot', isBot: true }], { seed: 7 });
+    const bot = new BotController(sim, 0, mulberry32(7), 'hard');
+    const base = sim.map.base!;
+    const dist0 = Math.hypot(sim.tanks[0]!.x - base.x, sim.tanks[0]!.y - base.y);
+    for (let i = 0; i < 600; i++) {
+      sim.setInput(0, bot.update());
+      sim.step();
+      sim.drainEvents();
+    }
+    const t = sim.tanks[0]!;
+    const dist1 = Math.hypot(t.x - base.x, t.y - base.y);
+    expect(dist1).toBeLessThan(dist0 - 64);
   });
 });
 

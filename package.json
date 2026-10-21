@@ -1,11 +1,11 @@
 {
   "name": "tanking",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n client,server -c yellow,green \"vite\" \"tsx watch server/index.ts\"",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/stamp-dist.cjs",
     "preview": "vite preview",
     "server": "tsx server/index.ts",
     "prestart": "node scripts/check-dist.cjs",
@@ -17,17 +17,17 @@
     "deploy": "node scripts/deploy.cjs",
     "firewall": "powershell -ExecutionPolicy Bypass -File scripts/firewall.ps1"
   },
+  "dependencies": {
+    "tsx": "^4.23.15",
+    "ws": "^8.22.0"
+  },
   "devDependencies": {
     "@types/node": "^26.6.5",
     "@types/ws": "^8.18.2",
     "@vitest/coverage-v8": "^2.1.8",
     "concurrently": "^10.0.6",
-    "tsx": "^4.23.15",
     "typescript": "^5.6.3",
     "vite": "^6.0.7",
     "vitest": "^2.1.8"
-  },
-  "dependencies": {
-    "ws": "^8.22.0"
   }
 }

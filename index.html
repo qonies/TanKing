@@ -28,8 +28,8 @@
     }
     #overlay.show { display: flex; }
     #overlay h1 { color: #e8c838; font-size: 28px; letter-spacing: 2px; }
-    #overlay p { color: #aaa; }
-    #overlay { z-index: 1; }
+    #overlay p { color: #aaa; white-space: pre-line; line-height: 1.6; }
+    #overlay { z-index: 5; }
     #menu, #lobby {
       position: absolute; inset: 0; z-index: 2;
       display: none; flex-direction: column; align-items: center; justify-content: center;
@@ -53,8 +53,9 @@
     #members { display: flex; flex-direction: column; gap: 4px; min-width: 180px; font-size: 13px; }
     .member-row { display: flex; justify-content: space-between; gap: 12px; background: #262626; padding: 4px 8px; }
     #menu-msg, #lobby-status { color: #c96; font-size: 12px; min-height: 14px; }
-    #cfg-row { display: flex; gap: 14px; font-size: 13px; align-items: center; }
-    #cfg-row select { background: #111; color: #ddd; border: 1px solid #555; font-family: inherit; padding: 3px 6px; }
+    #cfg-row, #single-cfg { display: flex; gap: 14px; font-size: 13px; align-items: center; flex-wrap: wrap; justify-content: center; }
+    #cfg-row select, #single-cfg select { background: #111; color: #ddd; border: 1px solid #555; font-family: inherit; padding: 3px 6px; }
+    #round-timer { font-size: 16px; color: #e8c838; font-weight: bold; letter-spacing: 1px; }
     #chat-log {
       width: 270px; height: 96px; overflow-y: auto; background: #111; border: 1px solid #444;
       font-size: 12px; text-align: left; padding: 4px 8px; display: flex; flex-direction: column; gap: 2px;
@@ -110,6 +111,21 @@
         <h1>TanKing</h1>
         <p class="panel-hint">FC 坦克大战 · 局域网 PvP 复刻</p>
         <input id="nick" maxlength="12" placeholder="输入昵称（可选）" />
+        <div id="single-cfg">
+          <label>坦克数
+            <select id="single-tanks">
+              <option>2</option><option>3</option><option>4</option><option>5</option>
+              <option selected>6</option><option>7</option><option>8</option>
+            </select>
+          </label>
+          <label>AI 难度
+            <select id="single-diff">
+              <option value="easy">简单</option>
+              <option value="normal" selected>普通</option>
+              <option value="hard">困难</option>
+            </select>
+          </label>
+        </div>
         <div class="btns">
           <button id="btn-single">单机模式</button>
           <button id="btn-online">联机对战</button>
@@ -151,6 +167,24 @@
           <label>地图
             <select id="cfg-map"></select>
           </label>
+          <label>积分
+            <select id="cfg-score">
+              <option>300</option><option>500</option><option selected>1000</option>
+              <option>2000</option><option>5000</option>
+            </select>
+          </label>
+          <label>时长
+            <select id="cfg-mins">
+              <option>1</option><option>3</option><option>5</option>
+              <option selected>8</option><option>15</option><option>30</option>
+            </select>
+          </label>
+          <label>道具
+            <select id="cfg-pu">
+              <option value="on" selected>开</option>
+              <option value="off">关</option>
+            </select>
+          </label>
         </div>
         <canvas id="map-preview" width="130" height="130" class="hidden"></canvas>
         <button id="btn-start" class="hidden">开始游戏</button>
@@ -164,13 +198,14 @@
     </div>
     <div id="hud">
       <h2>TanKing · 死亡竞技</h2>
+      <div id="round-timer">--:--</div>
       <div id="scores"></div>
       <h2>击杀播报</h2>
       <ul id="feed"></ul>
       <div id="help">
         操作：方向键 / WASD 移动，空格 / J 射击（主菜单可自定义键位）<br />
         对局中按 1~5 发送快捷短语 · 按 Tab 查看计分板 · 按 R 重新开始（单机）<br />
-        先达 1000 分获胜；8 分钟限时后积分最高者获胜<br />
+        默认先达 1000 分获胜、限时 8 分钟（房主可在房间内配置）<br />
         击毁闪红坦克会掉落道具
       </div>
     </div>

@@ -73,18 +73,37 @@ export class Room {
   private cfgDifficulty: BotDifficulty | null = null;
   /** 房主选定的下一局地图名（null = 随机轮换，M5 FR-N3） */
   private cfgMap: string | null = null;
+  /** 回合规则（FR-N3，2026-10-21 补齐）：积分上限 / 回合时长 tick / 道具开关 */
+  private cfgScoreCap: number | null = null;
+  private cfgTimeTicks: number | null = null;
+  private cfgPowerups: boolean | null = null;
 
   constructor(
     private readonly maps: MapDef[],
     private readonly opts: RoomOptions = {},
-  ) {}
+  ) {
+    if (maps.length === 0) throw new Error('Room 至少需要一张地图');
+  }
 
   private get maxTanks(): number {
-    return this.cfgMaxTanks ?? this.opts.maxTanks ?? 6; // D3 默认 6
+    const raw = this.cfgMaxTanks ?? this.opts.maxTanks ?? 6; // D3 默认 6
+    return Math.min(MAX_TANKS_CAP, Math.max(2, Math.round(raw)));
   }
 
   private get botDifficulty(): BotDifficulty {
     return this.cfgDifficulty ?? this.opts.botDifficulty ?? 'normal';
+  }
+
+  private get scoreCap(): number {
+    return this.cfgScoreCap ?? this.opts.scoreCap ?? SCORE_CAP_DEFAULT;
+  }
+
+  private get timeTicks(): number {
+    return this.cfgTimeTicks ?? this.opts.timeTicks ?? ROUND_TICKS_DEFAULT;
+  }
+
+  private get powerupsEnabled(): boolean {
+    return this.cfgPowerups ?? true;
   }
 
   private get seed(): number {
@@ -107,6 +126,7 @@ export class Room {
 
   removeConnection(connId: number): void {
     this.conns.delete(connId);
+    this.lastInputTick.delete(connId); // 防止长会话下 Map 无限增长
     const member = this.members.get(connId);
     if (!member) return;
     // FR-N4：对局中断线 → 成员保留、坦克 AI 托管，60s 内同名重连可接管
@@ -136,7 +156,7 @@ export class Room {
       case 'join': this.join(connId, msg.name); break;
       case 'start': this.start(connId); break;
       case 'input': this.applyInput(connId, msg.mask); break;
-      case 'config': this.configure(connId, msg.maxTanks, msg.botDifficulty, msg.map); break;
+      case 'config': this.configure(connId, msg.maxTanks, msg.botDifficulty, msg.map, msg.scoreCap, msg.roundMinutes, msg.powerups); break;
       case 'chat': this.chat(connId, msg.text); break;
       default: break; // 未知消息忽略，服务器不崩溃（IT-08）
     }
@@ -166,6 +186,7 @@ export class Room {
       for (const m of [...this.members.values()]) {
         if (!m.online && ++m.offlineTicks > HOST_TIMEOUT_TICKS) {
           this.members.delete(m.connId);
+          this.lastInputTick.delete(m.connId);
           this.broadcastLobby();
         }
       }
@@ -198,7 +219,7 @@ export class Room {
   private join(connId: number, rawName: string): void {
     const conn = this.conns.get(connId);
     if (!conn || this.members.has(connId)) return;
-    const name = rawName.trim().slice(0, 12) || `玩家${connId}`; // 昵称校验（NFR-6）
+    const name = (typeof rawName === 'string' ? rawName : '').trim().slice(0, 12) || `玩家${connId}`; // 昵称校验（NFR-6）
 
     // 对局中仅允许断线成员同名重连接管（FR-N4）；其余拒绝，避免产生无坦克的幽灵玩家
     if (this.phase === 'countdown' || this.phase === 'playing') {
@@ -209,6 +230,7 @@ export class Room {
         return;
       }
       this.members.delete(gone.connId);
+      this.lastInputTick.delete(gone.connId); // 旧连接的输入时间戳一并清理
       gone.connId = connId;
       gone.online = true;
       gone.offlineTicks = 0;
@@ -255,8 +277,9 @@ export class Room {
 
     this.sim = new BattleSim(mapDef, playerDefs, {
       seed,
-      scoreCap: this.opts.scoreCap ?? SCORE_CAP_DEFAULT,
-      timeTicks: this.opts.timeTicks ?? ROUND_TICKS_DEFAULT,
+      scoreCap: this.scoreCap,
+      timeTicks: this.timeTicks,
+      powerups: this.powerupsEnabled,
       powerupInterval: this.opts.powerupInterval,
     });
     this.bots.clear();
@@ -281,10 +304,18 @@ export class Room {
   }
 
   /** 房主设置（FR-N3）：仅 waiting/roundEnd 阶段、仅房主可改；map 为非法名/null 时回落随机轮换 */
-  private configure(connId: number, maxTanks?: number, difficulty?: BotDifficulty, map?: string | null): void {
+  private configure(
+    connId: number,
+    maxTanks?: number,
+    difficulty?: BotDifficulty,
+    map?: string | null,
+    scoreCap?: number,
+    roundMinutes?: number,
+    powerups?: boolean,
+  ): void {
     if (this.phase !== 'waiting' && this.phase !== 'roundEnd') return;
     if (connId !== this.ownerConnId()) return;
-    if (maxTanks !== undefined) {
+    if (maxTanks !== undefined && maxTanks !== null) {
       const n = Math.round(Number(maxTanks));
       if (Number.isFinite(n)) {
         // 不允许低于当前成员数：防止房主调小后按超员人数开局（实际坦克数 > 配置上限）
@@ -296,6 +327,17 @@ export class Room {
     }
     if (map !== undefined) {
       this.cfgMap = map && this.maps.some((m) => m.name === map) ? map : null;
+    }
+    if (scoreCap !== undefined && scoreCap !== null) {
+      const n = Math.round(Number(scoreCap));
+      if (Number.isFinite(n) && n >= 100) this.cfgScoreCap = Math.min(9999, n);
+    }
+    if (roundMinutes !== undefined && roundMinutes !== null) {
+      const n = Math.round(Number(roundMinutes));
+      if (Number.isFinite(n) && n >= 1) this.cfgTimeTicks = Math.min(60, n) * 60 * TICK_RATE;
+    }
+    if (typeof powerups === 'boolean') {
+      this.cfgPowerups = powerups;
     }
     this.broadcastLobby();
   }
@@ -372,6 +414,10 @@ export class Room {
               .map((t) => ({ tankId: t.id, score: t.score, kills: t.kills, deaths: t.deaths })),
           }
         : null,
+      // 回合规则（FR-N3）：房主可配置的积分上限 / 回合时长 / 道具开关
+      scoreCap: this.scoreCap,
+      roundMinutes: Math.round(this.timeTicks / (60 * TICK_RATE)),
+      powerups: this.powerupsEnabled,
     });
   }
 
@@ -388,6 +434,7 @@ export class Room {
       bullets: sim.bullets.map((b) => ({ id: b.id, ownerId: b.ownerId, dir: b.dir, x: b.x, y: b.y })),
       powerups: sim.powerups.map((p) => ({ id: p.id, type: p.type, x: p.x, y: p.y })),
       baseAlive: sim.baseAlive,
+      ticksLeft: sim.remainingTicks > 0 ? sim.remainingTicks : null,
     };
     // 性能：同一 tick 的快照整包只序列化一次，支持 sendRaw 的连接复用 JSON 字符串
     const json = JSON.stringify(msg);

@@ -1,7 +1,7 @@
 # 进度（Progress）
 
 ## 状态
-**M1~M5 全部完成（2026-10-21）**：M5 打磨发布落地，98/98 测试通过（含 m5 新增 9 例），tsc 0 错误，行覆盖 91.3%（shared/sim 96.1%），性能验证达标。项目进入发布状态。
+**M1~M5 完成 + 发布前复审修复（2026-10-21）**：version 0.6.0，112/112 测试通过（含复审新增 14 例回归），tsc 0 错误，性能验证达标（全链路 tick avg 0.015ms / 快照 1.44KB）。项目进入发布状态。
 
 ## 里程碑规划
 - [x] **M0 规划**：需求文档、技术路线、测试文档（已完成并评审确认，D1~D6 采用默认方案）
@@ -26,7 +26,12 @@
   - **部署脚本**：scripts/deploy.cjs（构建检查 + 局域网地址打印）、scripts/firewall.ps1（netsh 放行 TCP 3000，幂等），`npm run deploy` / `npm run firewall`
   - **测试**：tests/m5.test.ts 9 例（速度三档/速度缺省/闪红掉落 3 例/地图选择 3 例/快照 bonus），总计 98/98；冒烟 HTTP 200；vite build 通过
   - **文档同步**：PRD v0.5、参数对照表 M5 结论（逐帧比对定为发布后可选增强、近似项定稿）、测试文档（覆盖率实测/E2E 缓行说明）、README、version 0.5.0
-- [ ] **发布后可选增强**（不阻塞发布）：E2E Playwright（浏览器下载受环境限制）、FC 模拟器逐帧像素比对、正式像素素材（sprite sheet）、FR-T4 等级移动速度差异档
+- [x] **发布前复审修复**（2026-10-21，当前阶段）：文档↔代码复审全量修复，112/112 全绿，version 0.6.0——
+  - 阻断项：L3 砖墙右/下方向整格摧毁失效（改为命中砖格大格锚定）、回合结算画面被大厅遮挡（overlay z-index）+ 完整排名与 MVP、tick 循环异常后永久停摆（gameLoop 容错 + server error 处理）、测试依赖 dist 不可复现（HTTP 用例改临时目录）。
+  - 需求补齐：FR-N3 回合规则（积分上限/时长）与道具开关全量配置、FR-U3 HUD 回合倒计时（快照 ticksLeft）、FR-U4 结算全排名 + MVP、FR-O1 单机坦克数/AI 难度配置、FR-A2 AI 概率性攻打基地、履带声（PRD §4）。
+  - 健壮性：loader 出生点矩形/基地重叠校验、铁锹贴边越界修复、Room 入参与配置守卫、lastInputTick 清理、WS Origin 校验/maxPayload/连接上限、HTTP 异步 + 资源 404 语义、快照帧间分数插值、perf 计时口径修正（avg 0.015ms 含 AI+序列化）、构建戳记 + deploy 总是重建、tsx 移入 dependencies。
+  - 文档：PRD v0.6 / 技术路线 v0.4 / 测试文档 v0.4 / 参数对照表（定稿 + §4）/ README / memory-bank 同步；真实服务器冒烟（HTTP 200 / 同源 join / 跨源 401）通过。
+- [ ] **发布后可选增强**（不阻塞发布）：E2E Playwright（浏览器下载受环境限制）、FC 模拟器逐帧像素比对、正式像素素材（sprite sheet）、FR-T4 等级移动速度差异档、L4 手工联机清单执行
 
 ## 已完成
 - 记忆库建立（projectbrief / productContext / techContext / systemPatterns / activeContext / progress）
@@ -43,7 +48,9 @@
 
 ## 已知问题 / 风险
 - 原版手感逐帧像素比对（需 FC 模拟器）未执行，M5 已将 ⚠️ 近似项作为明确设计决策定稿（参数对照表 M5 结论），列为发布后可选增强。
-- E2E Playwright 未落地（浏览器下载受环境限制），以 HTTP/WS 冒烟替代；后续可补。
+- E2E Playwright 未落地（浏览器下载受环境限制），以 HTTP/WS 冒烟 + 集成测试替代；后续可补。
+- L4 手工联机清单（真机局域网 ≥3 设备、延迟录屏测量、多浏览器兼容）未执行，发布验收前建议跑一轮。
 - 素材为占位色块，正式像素素材（sprite sheet）待制作。
-- 断线托管为「同名重连」尽力而为方案：无账号/令牌机制，同名即接管（PRD FR-N4 允许）。
+- 断线托管为「同名重连」尽力而为方案：无账号/令牌机制，同名即接管（PRD FR-N4 允许；同名成员互冒风险已知）。
 - 房间为单实例（单房间），多房间不在本期范围。
+- 客户端模块（renderer/interp/audio/input/net/main）无单元测试（coverage 仅含 shared/server），由 L2 集成 + 冒烟覆盖，E2E 落地后可补 DOM 断言。

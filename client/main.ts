@@ -1,6 +1,6 @@
-import { FIELD, ROUND_TICKS_DEFAULT, SCORE_CAP_DEFAULT, TICK_MS } from '../shared/constants';
-import type { MapDef, SimEvent } from '../shared/types';
-import { BattleSim } from '../shared/sim/sim';
+import { BONUS_BOT_PROBABILITY, FIELD, ROUND_TICKS_DEFAULT, SCORE_CAP_DEFAULT, TICK_MS, TICK_RATE } from '../shared/constants';
+import type { MapDef, PlayerDef, SimEvent } from '../shared/types';
+import { BattleSim, PALETTE } from '../shared/sim/sim';
 import { BotController } from '../shared/sim/bot';
 import { mulberry32 } from '../shared/rng';
 import { MAPS, mapByName } from '../shared/maps';
@@ -45,6 +45,13 @@ const scoreboardEl = document.getElementById('scoreboard')!;
 const scoreboardBody = document.getElementById('scoreboard-body')!;
 const volSfx = document.getElementById('vol-sfx') as HTMLInputElement;
 const volMusic = document.getElementById('vol-music') as HTMLInputElement;
+// 复审修复：单机配置（FR-O1）、回合规则配置（FR-N3）、回合倒计时（FR-U3）
+const singleTanks = document.getElementById('single-tanks') as HTMLSelectElement;
+const singleDiff = document.getElementById('single-diff') as HTMLSelectElement;
+const cfgScore = document.getElementById('cfg-score') as HTMLSelectElement;
+const cfgMins = document.getElementById('cfg-mins') as HTMLSelectElement;
+const cfgPu = document.getElementById('cfg-pu') as HTMLSelectElement;
+const roundTimerEl = document.getElementById('round-timer')!;
 
 const SEED = 20261019;
 const FEED_TICKS = 240; // 播报停留 4 秒
@@ -63,7 +70,7 @@ const keys = new KeyboardInput(() => { if (mode === 'single') startSingle(); });
 
 // ---- 单机状态 ----
 let sim: BattleSim;
-let bot: BotController;
+let bots: BotController[] = [];
 
 // ---- 联机状态 ----
 const net = new NetClient();
@@ -72,6 +79,7 @@ let onlineMap: MapDef = MAPS[0]!;
 let terrain = new TerrainView(MAPS[0]!);
 let playersByTank = new Map<number, LobbyPlayer>();
 let myConnId = -1;
+let myTankId = -1;
 let lastSentMask = 0;
 let forceSendCd = 0;
 let onlineTick = 0;
@@ -89,8 +97,25 @@ function showMenu(msg = ''): void {
   mode = 'menu';
   net.close(); // 回菜单即断开：避免残留连接继续接收广播（误触音效/结算覆盖层）
   audio.stopBgm(); // M5：BGM 随对局结束
+  audio.engine(false); // 履带声同步停止
   menuMsg.textContent = msg;
   showPanel(menuEl);
+}
+
+/** 回合剩余时间（FR-U3）：mm:ss；null = 不限时 */
+function fmtTime(ticks: number | null): string {
+  if (ticks === null || ticks <= 0) return '不限时';
+  const s = Math.ceil(ticks / TICK_RATE);
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** 排名文本（FR-U4）：按积分排名，末尾标注 MVP（击杀最高，其次积分） */
+function rankLines(ranks: { name: string; score: number; kills: number; deaths: number }[]): string {
+  const sorted = [...ranks].sort((a, b) => b.score - a.score);
+  const mvp = [...ranks].sort((a, b) => b.kills - a.kills || b.score - a.score)[0];
+  const lines = sorted.map((t, i) => `${i + 1}. ${t.name}  ${t.score}分/${t.kills}杀/${t.deaths}死`);
+  if (mvp) lines.push(`MVP：${mvp.name}`);
+  return lines.join('\n');
 }
 
 function rebuildScoreRows(entries: { tankId: number; name: string; color: string }[]): void {
@@ -142,10 +167,13 @@ function handleSimEvent(e: SimEvent, tick: number, nameOf: (id: number) => strin
     case 'gameOver': {
       const winner = e.winnerId !== null ? nameOf(e.winnerId) : null;
       overlayTitle.textContent = winner ? `${winner} 获胜！` : '平局';
-      overlayText.textContent = mode === 'single' ? '按 R 重新开始' : '即将返回房间…';
+      overlayText.textContent = mode === 'single'
+        ? `${rankLines(sim.tanks.map((t) => ({ name: t.name, score: t.score, kills: t.kills, deaths: t.deaths })))}\n按 R 重新开始`
+        : '即将返回房间…';
       overlay.classList.add('show');
       if (mode === 'single') {
         audio.stopBgm();
+        audio.engine(false);
         audio.jingle('gameOver'); // M5：结算旋律（联机由房间阶段切换触发，避免重复）
       }
       break;
@@ -157,16 +185,30 @@ function handleSimEvent(e: SimEvent, tick: number, nameOf: (id: number) => strin
 
 function startSingle(): void {
   mode = 'single';
+  const total = Math.min(8, Math.max(2, Number(singleTanks.value) || 6));
+  const diff = (singleDiff.value as BotDifficulty) || 'normal';
   const mapDef = MAPS[Math.floor(Math.random() * MAPS.length)]!; // 单机随机地图
-  sim = new BattleSim(mapDef, [
-    { name: '玩家', isBot: false, color: '#e8c838' },
-    { name: 'Bot-1', isBot: true, color: '#d84040', speed: BOT_SPEED_BY_DIFFICULTY.normal },
-  ], { seed: SEED, scoreCap: SCORE_CAP_DEFAULT, timeTicks: ROUND_TICKS_DEFAULT });
-  bot = new BotController(sim, 1, mulberry32(99), 'normal');
+  const players: PlayerDef[] = [{ name: '玩家', isBot: false, color: '#e8c838' }];
+  const bonusRng = mulberry32(SEED + 7777); // 闪红标记与联机同规则（确定性）
+  for (let i = 1; i < total; i++) {
+    players.push({
+      name: `Bot-${i}`,
+      isBot: true,
+      color: PALETTE[i % PALETTE.length]!,
+      speed: BOT_SPEED_BY_DIFFICULTY[diff], // FR-O1：单机 AI 难度（含速度档位）
+      bonus: bonusRng() < BONUS_BOT_PROBABILITY,
+    });
+  }
+  sim = new BattleSim(mapDef, players, { seed: SEED, scoreCap: SCORE_CAP_DEFAULT, timeTicks: ROUND_TICKS_DEFAULT });
+  bots = [];
+  for (let i = 1; i < players.length; i++) {
+    bots.push(new BotController(sim, i, mulberry32(SEED + i * 104729), diff));
+  }
   renderer = new Renderer(ctx);
   feed = [];
+  audio.engine(false);
   showPanel(null);
-  rebuildScoreRows(sim.tanks.map((t, i) => ({ tankId: i, name: t.name, color: t.color })));
+  rebuildScoreRows(sim.tanks.map((t) => ({ tankId: t.id, name: t.name, color: t.color })));
   audio.jingle('start'); // M5：开场旋律
   audio.startBgm();      // M5：对局 BGM
 }
@@ -177,6 +219,7 @@ function updateSingleHud(): void {
     row.score.textContent = `${t.name}  ${t.score}分 / ${t.kills}杀/${t.deaths}死 / ★${t.level}`;
     row.status.textContent = !t.alive ? '重生中…' : t.frozenTicks > 0 ? '冻结' : t.shieldTicks > 0 ? '护盾' : '存活';
   });
+  roundTimerEl.textContent = sim.gameOver ? '回合结束' : fmtTime(sim.remainingTicks > 0 ? sim.remainingTicks : null);
   renderFeed(sim.tick);
 }
 
@@ -195,9 +238,11 @@ function goOnline(): void {
   feed = [];
   playersByTank.clear();
   myConnId = -1;
+  myTankId = -1;
   lastSentMask = 0;
   roomPhase = 'waiting';
   prevPhase = null;
+  audio.engine(false);
   chatLog.replaceChildren();
   net.onOpen = () => net.send({ t: 'join', name: nickInput.value });
   net.onMessage = handleNetMessage;
@@ -231,11 +276,12 @@ function handleNetMessage(msg: S2CMessage): void {
         buffer.clear();
       }
       if (msg.terrain) terrain.applyTerrain(msg.terrain);
-      applyLobbyState(msg.phase, msg.ownerConnId, msg.secondsLeft, msg.players, msg.maxTanks, msg.botDifficulty, msg.roundResult ?? null, msg.selectedMap ?? null);
+      applyLobbyState(msg.phase, msg.ownerConnId, msg.secondsLeft, msg.players, msg.maxTanks, msg.botDifficulty,
+        msg.scoreCap, msg.roundMinutes, msg.powerups, msg.roundResult ?? null, msg.selectedMap ?? null);
       break;
     }
     case 'snapshot':
-      buffer.push({ tick: msg.tick, tanks: msg.tanks, bullets: msg.bullets, powerups: msg.powerups, baseAlive: msg.baseAlive });
+      buffer.push({ tick: msg.tick, tanks: msg.tanks, bullets: msg.bullets, powerups: msg.powerups, baseAlive: msg.baseAlive, ticksLeft: msg.ticksLeft });
       onlineTick = msg.tick;
       break;
     case 'event':
@@ -277,15 +323,15 @@ function sendChat(): void {
   chatInput.value = '';
 }
 
-/** 结算覆盖层（FR-U4）：显示胜者与前三名，5 秒后自动隐藏露出大厅 */
+/** 结算覆盖层（FR-U4）：显示胜者、完整排名与 MVP，5 秒后自动隐藏露出大厅 */
 let resultTimer = 0;
 function showRoundResult(r: RoundResult): void {
   const nameOf = (tankId: number) => playersByTank.get(tankId)?.name ?? `P${tankId}`;
   const winner = r.winnerId !== null ? nameOf(r.winnerId) : null;
   overlayTitle.textContent = winner ? `${winner} 获胜！` : '平局';
-  overlayText.textContent = r.ranks.slice(0, 3)
-    .map((t, i) => `${i + 1}. ${nameOf(t.tankId)}  ${t.score}分/${t.kills}杀/${t.deaths}死`)
-    .join('    ');
+  overlayText.textContent = rankLines(r.ranks.map((t) => ({
+    name: nameOf(t.tankId), score: t.score, kills: t.kills, deaths: t.deaths,
+  })));
   overlay.classList.add('show');
   window.clearTimeout(resultTimer);
   resultTimer = window.setTimeout(() => overlay.classList.remove('show'), 5000);
@@ -298,11 +344,15 @@ function applyLobbyState(
   players: LobbyPlayer[],
   maxTanks: number,
   botDifficulty: BotDifficulty,
+  scoreCap: number,
+  roundMinutes: number,
+  powerups: boolean,
   roundResult: RoundResult | null,
   selectedMap: string | null,
 ): void {
   roomPhase = phase;
   playersByTank = new Map(players.filter((p) => p.tankId >= 0).map((p) => [p.tankId, p]));
+  myTankId = players.find((p) => p.connId === myConnId && p.tankId >= 0)?.tankId ?? -1;
   rebuildScoreRows([...playersByTank.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([tankId, p]) => ({ tankId, name: p.name, color: p.color })));
@@ -312,6 +362,9 @@ function applyLobbyState(
   if (cfgTanks.value !== String(maxTanks)) cfgTanks.value = String(maxTanks);
   if (cfgDiff.value !== botDifficulty) cfgDiff.value = botDifficulty;
   if (cfgMap.value !== (selectedMap ?? '')) cfgMap.value = selectedMap ?? '';
+  if (cfgScore.value !== String(scoreCap)) cfgScore.value = String(scoreCap);
+  if (cfgMins.value !== String(roundMinutes)) cfgMins.value = String(roundMinutes);
+  cfgPu.value = powerups ? 'on' : 'off';
   updateMapPreview(selectedMap);
 
   // M5：阶段切换音频（开场旋律 → BGM → 结算旋律）
@@ -358,6 +411,13 @@ function applyLobbyState(
 }
 
 function renderOnline(): void {
+  // 履带声（PRD §4）：本地坦克移动时持续低鸣
+  const latestSnap = buffer.latest;
+  if (latestSnap) {
+    const mine = myTankId >= 0 ? latestSnap.tanks.find((t) => t.id === myTankId) : undefined;
+    audio.engine(roomPhase === 'playing' && mine !== undefined && mine.alive && mine.moving);
+  }
+
   const s: Snapshot | null = buffer.sample(INTERP_DELAY);
   if (s) {
     renderer.render({
@@ -381,6 +441,9 @@ function renderOnline(): void {
         row.score.textContent = `${name}  ${t.score}分 / ${t.kills}杀/${t.deaths}死 / ★${t.level}`;
         row.status.textContent = !t.alive ? '重生中…' : t.frozenTicks > 0 ? '冻结' : t.shieldTicks > 0 ? '护盾' : '存活';
       });
+      roundTimerEl.textContent = roomPhase === 'playing' || roomPhase === 'countdown'
+        ? fmtTime(latest.ticksLeft)
+        : '—';
       renderFeed(onlineTick);
       refreshScoreboard();
     }
@@ -488,6 +551,9 @@ applyScale();
 // ---- 房主配置（FR-N3）----
 cfgTanks.addEventListener('change', () => net.send({ t: 'config', maxTanks: Number(cfgTanks.value) }));
 cfgDiff.addEventListener('change', () => net.send({ t: 'config', botDifficulty: cfgDiff.value as BotDifficulty }));
+cfgScore.addEventListener('change', () => net.send({ t: 'config', scoreCap: Number(cfgScore.value) }));
+cfgMins.addEventListener('change', () => net.send({ t: 'config', roundMinutes: Number(cfgMins.value) }));
+cfgPu.addEventListener('change', () => net.send({ t: 'config', powerups: cfgPu.value === 'on' }));
 
 // ---- 大厅聊天 / 游戏内快捷短语（D4）----
 btnChat.addEventListener('click', sendChat);
@@ -554,12 +620,13 @@ function frame(now: number): void {
     if (mode === 'single') {
       if (!sim.gameOver) {
         sim.setInput(0, keys.getMask());
-        sim.setInput(1, bot.update());
+        for (const b of bots) sim.setInput(b.tankId, b.update());
         sim.step();
         for (const e of sim.drainEvents()) {
           handleSimEvent(e, sim.tick, (id) => sim.tanks[id]?.name ?? '?');
         }
       }
+      audio.engine(!sim.gameOver && (sim.tanks[0]?.moving ?? false)); // 履带声随移动开关
     } else if (mode === 'online') {
       // 输入上行：变化时发送 + 心跳兜底（技术路线 §4.2）
       const mask = keys.getMask();

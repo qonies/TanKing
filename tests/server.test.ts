@@ -152,6 +152,7 @@ describe('L2 集成：非法消息与快照契约（IT-08）', () => {
     room.step();
     const s: Snapshot = a.snapshots[a.snapshots.length - 1]!;
     expect(s.tanks.length).toBe(2);
+    expect(s).toHaveProperty('ticksLeft'); // FR-U3：快照携带回合剩余时间
     for (const t of s.tanks) {
       for (const key of ['id', 'x', 'y', 'dir', 'moving', 'alive', 'shieldTicks', 'respawnTicks', 'score', 'kills'] as const) {
         expect(t).toHaveProperty(key);

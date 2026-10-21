@@ -18,11 +18,36 @@ const server = createHttpServer(DIST);
 // ---- 游戏房间（内置地图轮换；D3 默认 6 坦克，房主可配置 2~8） ----
 const room = new Room(MAPS, { maxTanks: 6 });
 
+/** WebSocket 握手 Origin 校验（NFR-6）：拒绝来自其他站点的跨站 WebSocket（CSWSH） */
+function originAllowed(origin: string | undefined, host: string | undefined): boolean {
+  if (!origin) return true; // 非浏览器客户端（测试/工具）允许
+  try {
+    const o = new URL(origin);
+    if (host && o.host === host) return true; // 同源（生产模式 / Vite 代理）
+    const hn = o.hostname;
+    return hn === 'localhost' || hn === '127.0.0.1' || hn === '[::1]'; // 本机调试
+  } catch {
+    return false;
+  }
+}
+
 // ---- WebSocket：与 HTTP 共享端口，路径 /ws ----
-const wss = new WebSocketServer({ server, path: '/ws' });
+const MAX_CONNECTIONS = 32; // 局域网游戏足够，防止连接洪水
+const wss = new WebSocketServer({
+  server,
+  path: '/ws',
+  maxPayload: 4 * 1024, // 消息均为小 JSON（input/chat/config），超限直接断开
+  verifyClient: (info, callback) => {
+    callback(originAllowed(info.req.headers.origin, info.req.headers.host));
+  },
+});
 let nextConnId = 1;
 
 wss.on('connection', (socket: WebSocket) => {
+  if (wss.clients.size > MAX_CONNECTIONS) {
+    socket.close();
+    return;
+  }
   const conn: Conn = {
     id: nextConnId++,
     send: (msg: S2CMessage) => {
@@ -47,9 +72,15 @@ wss.on('connection', (socket: WebSocket) => {
 
 const stopLoop = startTickLoop(1000 / TICK_RATE, () => room.step());
 
-// 局域网游戏服务器韧性：兜底防止未捕获异常打崩进程（各入口已单独 try/catch）
+// 局域网游戏服务器韧性：兜底防止未捕获异常打崩进程（tick 循环自身已在 gameLoop 内容错）
 process.on('uncaughtException', (err) => {
   console.error('[TanKing] 未捕获异常（已忽略，服务器继续运行）:', err);
+});
+
+// 端口占用等致命错误：明确退出，避免进程假活（无 error 监听时 EADDRINUSE 会被 uncaughtException 吞掉）
+server.on('error', (err) => {
+  console.error('[TanKing] 服务器错误，即将退出:', err);
+  process.exit(1);
 });
 
 server.listen(PORT, '0.0.0.0', () => {

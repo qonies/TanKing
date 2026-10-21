@@ -1,7 +1,7 @@
 # 当前工作上下文（Active Context）
 
 ## 当前阶段
-**M1~M5 全部完成（2026-10-21）**：M5 打磨发布落地，98/98 测试通过，`tsc --noEmit` 0 错误，行覆盖 91.3%（shared/sim 96.1%），性能验证达标（tick 0.002ms / 快照 1.4KB）。项目进入发布状态；剩余为发布后可选增强（E2E Playwright、FC 模拟器逐帧比对、像素素材、FR-T4 速度档）。
+**M1~M5 完成 + 发布前复审修复（2026-10-21）**：version 0.6.0，112/112 测试通过，`tsc --noEmit` 0 错误，性能验证达标（全链路 tick avg 0.015ms / 快照 1.44KB，口径含 AI 决策与序列化）。复审修复落地：L3 砖墙四方向整格摧毁、结算画面可见 + 完整排名与 MVP、HUD 回合倒计时、房主回合规则/道具开关配置（FR-N3 全量）、单机坦克数与 AI 难度配置（FR-O1）、AI 概率性攻打基地（FR-A2）、履带声、快照帧间分数插值、tick 循环异常容错、WS Origin 校验/maxPayload、HTTP 资源 404 语义、loader 出生点/基地重叠校验、铁锹贴边越界修复、测试自包含。剩余为发布后可选增强（E2E Playwright、FC 模拟器逐帧比对、像素素材、FR-T4 速度档、L4 手工联机清单执行）。
 
 ## 已确认的关键决策
 1. 核心玩法：**PvP 死亡竞技**（用户选定）。
@@ -69,7 +69,13 @@
   - **文档同步**：PRD v0.4（状态行 + FR 范围标注）、技术路线（node:http/协议名/快照浮点/同名重连/地图 JSON 顶层 terrain/目录树）、测试文档（IT-02/07/08 语义、覆盖率与 E2E 标 M5）、参数对照表（AI 掉落、旋律）、README（M1~M4、修复清单、局域网联机说明）。
   - 新增 tests/fixes.test.ts 20 例（出生点唯一 7 图、trySnap 2 例、HTTP 400/逃逸、炸弹护盾、铁锹事件、配置下限、重连地形、roundResult、广播范围、输入超时、loader 校验 3 例）；m4/movement/m3 三处断言随行为变更同步更新。
 - [x] **M5 打磨发布**（2026-10-21，当前阶段）：AI 速度三档（BOT_SPEED_BY_DIFFICULTY，Tank.speed）、闪红 AI 掉落（PlayerDef.bonus + BONUS_BOT_PROBABILITY 0.2，killTank 原地掉落，快照 bonus 字段，客户端闪烁渲染）、旋律音频（audio.ts 重构：双增益音量持久化 + jingle 开场/结算 + 原创循环 BGM 前瞻调度）、房主地图选择（config.map + selectedMap + 大厅下拉框）与地图预览（drawMapPreview）、音量滑杆 + 1x~3x 整数缩放（applyScale）、Tab 计分板、覆盖率工具（@vitest/coverage-v8，阈值 85/80，实测 91.3%/96.1%）、性能验证（scripts/perf.ts，`npm run perf`）、部署脚本（deploy.cjs + firewall.ps1）；tests/m5.test.ts 9 例，总计 98/98；PRD v0.5 / 参数对照表 M5 结论 / 测试文档 / README 同步；version 0.5.0
-- [ ] **发布后可选增强**（不阻塞发布）：E2E Playwright、FC 模拟器逐帧像素比对、正式像素素材、FR-T4 等级移动速度差异档
+- [x] **发布前复审修复（2026-10-21，当前阶段）**：文档↔代码复审按用户裁决全量修复，112/112 全绿，version 0.6.0：
+  - **P0/阻断**：① L3 砖墙整格摧毁以命中砖格所属大格为锚（修复向右/向下方向完全无效）；② 回合结算覆盖层 z-index 提升到大厅之上（FR-U4 可见）+ 完整排名与 MVP（rankLines）；③ gameLoop onTick 异常跳帧继续、连续异常过多才停止（NFR-5，修复 tick 永久停摆）+ server 'error' 处理端口占用；④ tests/fixes HTTP 用例改用临时目录（测试不再依赖 dist，干净 checkout 可跑）。
+  - **需求补齐**：⑤ FR-N3 全量——config 增加 scoreCap（300~5000）/roundMinutes（1~30 分钟）/powerups（开关），BattleSim 增 powerups 选项（关 = 无定点刷新/无闪红掉落），大厅房主配置 UI；⑥ FR-U3——快照携带 ticksLeft，HUD mm:ss 倒计时；⑦ FR-O1——单机主菜单坦克数 2~8 / AI 难度三档（bots: BotController[]）；⑧ FR-A2——无敌人可追踪时概率性攻打中立基地（BASE_ATTACK_CHANCE，hard 0.5/normal 0.15）；⑨ 履带声（AudioFx.engine，随本地坦克移动开关/淡出）。
+  - **健壮性**：⑩ loader 出生点 2×2 矩形重叠 / 出生点-基地重叠校验；⑪ 铁锹环绕格越界过滤（修复 Uint8Array 越界回绕写坏地形）；⑫ lastInputTick 断线/重连/超时清理；⑬ Room 构造校验地图非空、opts.maxTanks clamp 2~8、join 非字符串昵称守卫、config null 值忽略；⑭ WS Origin 校验（拒绝跨站 CSWSH）+ maxPayload 4KB + 连接上限 32；⑮ HTTP 改 fs/promises 异步、带扩展名资源缺失/逃逸 404 不回落 SPA；⑯ 快照插值改为「最新 tick − 2 + tick 内时间分数」实现真正帧间插值；⑰ perf 计时口径覆盖 AI + 序列化（avg 0.015ms / 1.44KB）；⑱ 构建戳记 dist/build-info.json + check-dist 校验 + deploy 总是重建；⑲ tsx 移入 dependencies。
+  - **文档同步**：PRD v0.6、技术路线 v0.4、测试文档 v0.4、参数对照表（⚠️ 状态定稿 + 新增 §4 复审记录）、README；memory-bank 同步。
+  - 新增回归：tests/fixes.test.ts 14 例（L3 四方向 3、铁锹贴边 1、FR-N3 2、loader 2、Room 4、gameLoop 1、AI 基地 1）+ server.test 快照 ticksLeft 契约；真实服务器冒烟通过（HTTP 200 / 同源 join welcome / 跨源 Origin 401 拒绝）。
+- [ ] **发布后可选增强**（不阻塞发布）：E2E Playwright、FC 模拟器逐帧像素比对、正式像素素材、FR-T4 等级移动速度差异档、L4 手工联机清单执行（真机局域网验收）
 
 ## M1 实现要点（后续开发需遵守）
 1. **输入统一为位掩码**：`INPUT_UP=1/DOWN=2/LEFT=4/RIGHT=8/FIRE=16`（不是 `1<<Dir`！），真人与 AI 都走 `sim.setInput(id, mask)`。

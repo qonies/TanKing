@@ -51,6 +51,8 @@ export interface SimOptions {
   timeTicks?: number;
   /** 道具刷新间隔 tick（测试可缩短） */
   powerupInterval?: number;
+  /** 道具开关（FR-N3）：false 时无定点刷新、无闪红掉落 */
+  powerups?: boolean;
 }
 
 export interface Tank extends TankState {
@@ -97,6 +99,7 @@ export class BattleSim {
   private readonly rng: () => number;
   private readonly scoreCap: number;
   private readonly powerupInterval: number;
+  private readonly powerupsEnabled: boolean;
   private ticksLeft: number;
   private nextBulletId = 1;
   private nextPowerupId = 1;
@@ -111,6 +114,7 @@ export class BattleSim {
     this.ticksLeft = opts.timeTicks ?? 0;
     this.powerupInterval = opts.powerupInterval ?? POWERUP_INTERVAL_TICKS;
     this.powerupCd = this.powerupInterval;
+    this.powerupsEnabled = opts.powerups ?? true;
     this.baseAlive = this.map.base !== null;
 
     // P0 修复：出生点唯一分配（地图 spawns 不足时按行优先扫描安全空位兜底），
@@ -430,18 +434,36 @@ export class BattleSim {
     return true;
   }
 
-  /** 砖墙损毁条带：垂直于飞行方向 32px 宽；L3 深度扩展为整大格（FR-M1） */
+  /**
+   * 砖墙损毁（FR-M1）：
+   * - 常规弹：垂直于弹道 32px 宽 × 1 小格深条带；
+   * - L3：以实际命中的砖格为锚点，摧毁其所属 2×2 大格（四方向行为一致）。
+   */
   private destroyBrickStrip(b: Bullet): void {
-    const vertical = b.dir === Dir.Up || b.dir === Dir.Down;
-    let rx = vertical ? b.x + BULLET_SIZE / 2 - CELL : b.x;
-    let ry = vertical ? b.y : b.y + BULLET_SIZE / 2 - CELL;
-    let rw = vertical ? TANK_SIZE : BULLET_SIZE;
-    let rh = vertical ? BULLET_SIZE : TANK_SIZE;
     if (b.level >= MAX_LEVEL) {
-      // L3：深度扩展为完整大格（2×2 小格）
-      if (vertical) { ry = Math.floor(ry / TANK_SIZE) * TANK_SIZE; rh = TANK_SIZE; }
-      else { rx = Math.floor(rx / TANK_SIZE) * TANK_SIZE; rw = TANK_SIZE; }
+      const hit = cellsOfRect(b.x, b.y, BULLET_SIZE, BULLET_SIZE)
+        .find(([cx, cy]) => terrainAt(this.map, cx, cy) === TerrainType.Brick);
+      if (hit) {
+        const [hx, hy] = hit;
+        const bx = Math.floor(hx / 2) * 2;
+        const by = Math.floor(hy / 2) * 2;
+        for (let cy = by; cy <= by + 1; cy++) {
+          for (let cx = bx; cx <= bx + 1; cx++) {
+            if (terrainAt(this.map, cx, cy) === TerrainType.Brick) {
+              this.map.terrain[cy * this.map.size + cx] = TerrainType.Empty;
+              this.events.push({ type: 'brickBreak', x: cx, y: cy });
+            }
+          }
+        }
+      }
+      return;
     }
+
+    const vertical = b.dir === Dir.Up || b.dir === Dir.Down;
+    const rx = vertical ? b.x + BULLET_SIZE / 2 - CELL : b.x;
+    const ry = vertical ? b.y : b.y + BULLET_SIZE / 2 - CELL;
+    const rw = vertical ? TANK_SIZE : BULLET_SIZE;
+    const rh = vertical ? BULLET_SIZE : TANK_SIZE;
 
     for (const [cx, cy] of cellsOfRect(rx, ry, rw, rh)) {
       if (terrainAt(this.map, cx, cy) === TerrainType.Brick) {
@@ -500,6 +522,9 @@ export class BattleSim {
       this.events.push({ type: 'terrainSet', cells: this.shovelBackup.map(([cx, cy, tt]) => ({ x: cx, y: cy, t: tt })) });
       this.shovelBackup = null;
     }
+
+    // 道具开关（FR-N3）：关闭时不刷新、不拾取（场上不会有道具；铁锹恢复逻辑不受影响）
+    if (!this.powerupsEnabled) return;
 
     // 定点刷新：同时在场 ≤ MAX_POWERUPS，地图需配置点位
     // 冷却恒定流转：满员/点位被占而跳过本轮时也照常重置，避免清空后重新等满一整段间隔（M4 修复）
@@ -566,6 +591,8 @@ export class BattleSim {
       const cells: [number, number, TerrainType][] = [];
       const baseCells = new Set(cellsOfRect(base.x, base.y, TANK_SIZE, TANK_SIZE).map(([x, y]) => `${x},${y}`));
       for (const [cx, cy] of cellsOfRect(base.x - CELL, base.y - CELL, TANK_SIZE + 2 * CELL, TANK_SIZE + 2 * CELL)) {
+        // 贴边基地：跳出场外的小格（越界索引会回绕破坏地形数组）
+        if (cx < 0 || cy < 0 || cx >= this.map.size || cy >= this.map.size) continue;
         if (baseCells.has(`${cx},${cy}`)) continue;
         cells.push([cx, cy, terrainAt(this.map, cx, cy)]);
         this.map.terrain[cy * this.map.size + cx] = TerrainType.Steel;
@@ -602,8 +629,8 @@ export class BattleSim {
     this.events.push({ type: 'explosion', x: cx, y: cy, big: true });
     this.events.push({ type: 'kill', killerId: killerId, victimId: victim.id, x: cx, y: cy });
 
-    // 闪红坦克掉落（M5，FR-P 适配）：原地掉落随机道具（与既有道具重叠时跳过）
-    if (victim.bonus) {
+    // 闪红坦克掉落（M5，FR-P 适配）：原地掉落随机道具（与既有道具重叠时跳过；道具开关关闭时不掉落）
+    if (victim.bonus && this.powerupsEnabled) {
       const overlapped = this.powerups.some((p) =>
         rectsOverlap(victim.x, victim.y, TANK_SIZE, TANK_SIZE, p.x, p.y, TANK_SIZE, TANK_SIZE));
       if (!overlapped) {

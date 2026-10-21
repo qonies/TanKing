@@ -63,6 +63,8 @@ export interface Snapshot {
   bullets: SnapshotBullet[];
   powerups: SnapshotPowerup[];
   baseAlive: boolean;
+  /** 回合剩余 tick（null = 不限时）；FR-U3 HUD 倒计时 */
+  ticksLeft: number | null;
 }
 
 // ---- C→S ----
@@ -70,7 +72,8 @@ export type C2SMessage =
   | { t: 'join'; name: string }
   | { t: 'start' }
   | { t: 'input'; mask: number }
-  | { t: 'config'; maxTanks?: number; botDifficulty?: BotDifficulty; map?: string | null } // 房主设置（FR-N3；map 为 null/'' 表示随机轮换）
+  | { t: 'config'; maxTanks?: number; botDifficulty?: BotDifficulty; map?: string | null; // 房主设置（FR-N3；map 为 null/'' 表示随机轮换）
+      scoreCap?: number; roundMinutes?: number; powerups?: boolean } // 回合规则与道具开关（FR-N3，2026-10-21 补齐）
   | { t: 'chat'; text: string }; // 大厅聊天 / 游戏中快捷短语（D4）
 
 // ---- S→C ----
@@ -80,8 +83,10 @@ export type S2CMessage =
   | { t: 'lobbyState'; phase: RoomPhase; ownerConnId: number; secondsLeft: number | null; players: LobbyPlayer[]; maxTanks: number; botDifficulty: BotDifficulty;
       /** 房主选定的下一局地图（null = 随机轮换，M5 FR-N3） */
       selectedMap?: string | null;
-      map?: string; terrain?: number[]; ticksLeft?: number | null; roundResult?: RoundResult | null }
-  | { t: 'snapshot'; tick: number; tanks: SnapshotTank[]; bullets: SnapshotBullet[]; powerups: SnapshotPowerup[]; baseAlive: boolean }
+      map?: string; terrain?: number[]; ticksLeft?: number | null; roundResult?: RoundResult | null;
+      /** 回合规则（FR-N3，房主可配） */
+      scoreCap: number; roundMinutes: number; powerups: boolean }
+  | { t: 'snapshot'; tick: number; tanks: SnapshotTank[]; bullets: SnapshotBullet[]; powerups: SnapshotPowerup[]; baseAlive: boolean; ticksLeft: number | null }
   | { t: 'event'; event: SimEvent }
   | { t: 'chat'; from: string; color: string; text: string }
   | { t: 'error'; message: string };

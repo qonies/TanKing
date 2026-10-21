@@ -11,8 +11,7 @@ import { TICK_RATE } from '../shared/constants';
 import { mulberry32 } from '../shared/rng';
 import type { S2CMessage } from '../shared/protocol';
 
-const TICKS = 60 * TICK_RATE; // 60s 模拟
-const SNAPSHOT_SAMPLE_EVERY = 30;
+const TICKS = 60 * TICK_RATE;
 
 function buildPlayers() {
   return [
@@ -39,6 +38,7 @@ function snapshotFor(sim: BattleSim): string {
     bullets: sim.bullets.map((b) => ({ id: b.id, ownerId: b.ownerId, dir: b.dir, x: b.x, y: b.y })),
     powerups: sim.powerups.map((p) => ({ id: p.id, type: p.type, x: p.x, y: p.y })),
     baseAlive: sim.baseAlive,
+    ticksLeft: sim.remainingTicks > 0 ? sim.remainingTicks : null,
   };
   return JSON.stringify(msg);
 }
@@ -60,16 +60,15 @@ for (const mapDef of MAPS) {
   let mapWorst = 0;
   let mapSum = 0;
   for (let i = 0; i < TICKS; i++) {
-    for (const [tankId, bot] of bots) sim.setInput(tankId, bot.update());
+    // 计时覆盖完整服务器 tick：AI 决策 + 模拟 + 快照 JSON 序列化（与 Room.step 同口径，NFR-1）
     const t0 = performance.now();
+    for (const [tankId, bot] of bots) sim.setInput(tankId, bot.update());
     sim.step();
+    snapshotTotal += snapshotFor(sim).length;
+    snapshotCount++;
     const dt = performance.now() - t0;
     mapWorst = Math.max(mapWorst, dt);
     mapSum += dt;
-    if (i % SNAPSHOT_SAMPLE_EVERY === 0) {
-      snapshotTotal += snapshotFor(sim).length;
-      snapshotCount++;
-    }
   }
   globalWorst = Math.max(globalWorst, mapWorst);
   globalSum += mapSum;

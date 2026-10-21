@@ -12,13 +12,13 @@
 | 通信 | WebSocket（`ws` 库）+ 自定义二进制/JSON 协议 | 局域网低延迟，服务器权威模型 |
 | 房间服务 | Node 进程同时托管 HTTP 静态文件 + WebSocket | 一个命令启动，客户端访问 `http://<host-ip>:3000` |
 | 单元测试 | Vitest | 游戏逻辑纯函数化，Node 环境 headless 运行；覆盖率 @vitest/coverage-v8（`npm run test:coverage`，阈值行 85%/函数 80%） |
-| 性能验证 | scripts/perf.ts（`npm run perf`） | BattleSim tick 耗时 + 快照体积（M5 实测：avg 0.002ms / 1.42KB） |
+| 性能验证 | scripts/perf.ts（`npm run perf`） | 完整服务器 tick（AI 决策 + 模拟 + 快照序列化）：avg 0.015ms（预算 16.67ms）/ 快照 1.44KB（0.6.0 实测） |
 | E2E 测试 | Playwright | 多浏览器页面实例模拟多人联机（**发布后可选增强，M5 未落地**） |
 
 ## 开发环境（Windows）
 - Node.js ≥ 20, npm
 - `npm run dev`：concurrently 并行启动 Vite(5173，`server.host: true` 监听 0.0.0.0 供局域网访问，代理 /ws→3000) + tsx watch 游戏服务器(3000)
-- `npm run build` + `npm start`：生产模式，单端口 3000 托管（服务器读 `dist/`）；**局域网联机务必用生产模式**（dev 的 3000 端口只托管 dist 静态产物）；`prestart` 会检查 dist 产物存在性（scripts/check-dist.cjs）
+- `npm run build` + `npm start`：生产模式，单端口 3000 托管（服务器读 `dist/`）；build 末尾写入构建戳记 `dist/build-info.json`（prestart 校验版本一致性）；**局域网联机务必用生产模式**（dev 的 3000 端口只托管 dist 静态产物）；`prestart` 会检查 dist 产物存在性（scripts/check-dist.cjs）
 - 浏览器目标：Chrome / Edge / Firefox 最新两个大版本
 
 ## 技术约束

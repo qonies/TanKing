@@ -30,6 +30,8 @@ export class AudioFx {
   private bgmTimer = 0;
   private bgmStep = 0;
   private bgmNextTime = 0;
+  private engineOsc: OscillatorNode | null = null;
+  private engineGain: GainNode | null = null;
 
   /** 需在用户手势中调用（浏览器自动播放策略） */
   unlock(): void {
@@ -159,6 +161,30 @@ export class AudioFx {
     if (this.bgmTimer) {
       window.clearInterval(this.bgmTimer);
       this.bgmTimer = 0;
+    }
+  }
+
+  /** 履带/引擎声（PRD §4）：本地坦克移动时持续低鸣，停止/离场时淡出 */
+  engine(on: boolean): void {
+    if (!this.ac || !this.sfxGain) return;
+    if (on && this.engineOsc === null) {
+      const osc = this.ac.createOscillator();
+      const gain = this.ac.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.value = 48;
+      gain.gain.setValueAtTime(0.0001, this.ac.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.05, this.ac.currentTime + 0.08);
+      osc.connect(gain).connect(this.sfxGain);
+      osc.start();
+      this.engineOsc = osc;
+      this.engineGain = gain;
+    } else if (!on && this.engineOsc !== null && this.engineGain !== null) {
+      const osc = this.engineOsc;
+      const gain = this.engineGain;
+      gain.gain.setTargetAtTime(0.0001, this.ac.currentTime, 0.05);
+      osc.stop(this.ac.currentTime + 0.3);
+      this.engineOsc = null;
+      this.engineGain = null;
     }
   }
 

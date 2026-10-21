@@ -26,11 +26,13 @@ const DECIDE_INTERVAL = 10;   // 每 10 tick 重新决策
 const STUCK_TICKS = 30;       // 卡墙判定
 const FIRE_COOLDOWN: Record<BotDifficulty, number> = { easy: 60, normal: 30, hard: 15 };
 const FIRE_CHANCE: Record<BotDifficulty, number> = { easy: 0.3, normal: 0.6, hard: 0.9 };
+/** FR-A2：无敌人可追踪时概率性攻打中立基地（摧毁 +500，困难档更积极） */
+const BASE_ATTACK_CHANCE: Record<BotDifficulty, number> = { easy: 0, normal: 0.15, hard: 0.5 };
 
 /**
  * AI 机器人控制器（FR-A2）：
- * 对齐敌人时直接瞄准开火；否则在 25×25 坦克位网格上 BFS 寻路逼近目标
- * （砖墙视为可通行——卡住时开火开路）；无目标则随机巡逻。
+ * 对齐目标（敌人/基地）时直接瞄准开火；否则在 25×25 坦克位网格上 BFS 寻路逼近目标
+ * （砖墙视为可通行——卡住时开火开路）；困难档会抢道具；无目标则随机巡逻。
  * 与真人共用 setInput 通道，产出输入位掩码。
  */
 export class BotController {
@@ -83,7 +85,8 @@ export class BotController {
     const enemy = this.nearestEnemy(me);
     // 困难档（FR-A3）：无对枪机会时优先逼近场上的道具（抢道具）
     if (this.difficulty === 'hard' && this.sim.powerups.length > 0) {
-      const aligned = enemy !== undefined && this.alignedDir(me, enemy) !== null;
+      const aligned = enemy !== undefined &&
+        this.alignedDir(me, enemy.x + TANK_SIZE / 2, enemy.y + TANK_SIZE / 2) !== null;
       if (!aligned) {
         const pu = this.sim.powerups[0]!;
         const d = this.bfsDir(me, pu.x + TANK_SIZE / 2, pu.y + TANK_SIZE / 2, -1);
@@ -94,12 +97,30 @@ export class BotController {
       }
     }
     if (enemy) {
-      const dir = this.alignedDir(me, enemy);
+      const ecx = enemy.x + TANK_SIZE / 2;
+      const ecy = enemy.y + TANK_SIZE / 2;
+      const dir = this.alignedDir(me, ecx, ecy);
       if (dir !== null) {
-        if (!this.tryFire(me, enemy, dir)) this.mask = DIR_INPUT[dir]!;
+        if (!this.tryFire(me, dir, ecx, ecy)) this.mask = DIR_INPUT[dir]!;
         return;
       }
-      const d = this.bfsDir(me, enemy.x + TANK_SIZE / 2, enemy.y + TANK_SIZE / 2, enemy.id);
+      const d = this.bfsDir(me, ecx, ecy, enemy.id);
+      if (d !== null) {
+        this.mask = DIR_INPUT[d]!;
+        return;
+      }
+    }
+    // FR-A2：嗅探基地方向——无敌人可追踪（或寻路失败）时概率性攻打中立基地（+500）
+    const base = this.sim.map.base;
+    if (base && this.sim.baseAlive && this.rng() < BASE_ATTACK_CHANCE[this.difficulty]) {
+      const bcx = base.x + TANK_SIZE / 2;
+      const bcy = base.y + TANK_SIZE / 2;
+      const dir = this.alignedDir(me, bcx, bcy);
+      if (dir !== null) {
+        if (!this.tryFire(me, dir, bcx, bcy)) this.mask = DIR_INPUT[dir]!;
+        return;
+      }
+      const d = this.bfsDir(me, bcx, bcy, -1);
       if (d !== null) {
         this.mask = DIR_INPUT[d]!;
         return;
@@ -111,21 +132,19 @@ export class BotController {
     }
   }
 
-  /** 与目标同行/同列（半格容差）时的开火方向；未对齐返回 null */
-  private alignedDir(me: Tank, enemy: TankState): DirT | null {
+  /** 与目标点同行/同列（半格容差）时的开火方向；未对齐返回 null */
+  private alignedDir(me: Tank, tx: number, ty: number): DirT | null {
     const mcx = me.x + TANK_SIZE / 2;
     const mcy = me.y + TANK_SIZE / 2;
-    const ecx = enemy.x + TANK_SIZE / 2;
-    const ecy = enemy.y + TANK_SIZE / 2;
-    if (Math.abs(mcx - ecx) <= CELL / 2 && mcy !== ecy) return ecy < mcy ? Dir.Up : Dir.Down;
-    if (Math.abs(mcy - ecy) <= CELL / 2 && mcx !== ecx) return ecx < mcx ? Dir.Left : Dir.Right;
+    if (Math.abs(mcx - tx) <= CELL / 2 && mcy !== ty) return ty < mcy ? Dir.Up : Dir.Down;
+    if (Math.abs(mcy - ty) <= CELL / 2 && mcx !== tx) return tx < mcx ? Dir.Left : Dir.Right;
     return null;
   }
 
-  private tryFire(me: Tank, enemy: TankState, dir: DirT): boolean {
+  private tryFire(me: Tank, dir: DirT, tx: number, ty: number): boolean {
     if (this.fireCd > 0) return false;
     if (this.rng() > FIRE_CHANCE[this.difficulty]) return false;
-    if (!this.losClear(me, enemy, dir)) return false;
+    if (!this.losClear(me, tx, ty, dir)) return false;
     this.mask = DIR_INPUT[dir]! | INPUT_FIRE;
     this.fireCd = FIRE_COOLDOWN[this.difficulty];
     return true;
@@ -152,10 +171,10 @@ export class BotController {
   }
 
   /** 视线：沿线钢墙/砖墙阻挡（子弹可穿水） */
-  private losClear(me: TankState, enemy: TankState, dir: DirT): boolean {
+  private losClear(me: TankState, tx: number, ty: number, dir: DirT): boolean {
     const v = DIR_VEC[dir]!;
-    const gx = Math.floor((enemy.x + TANK_SIZE / 2) / CELL);
-    const gy = Math.floor((enemy.y + TANK_SIZE / 2) / CELL);
+    const gx = Math.floor(tx / CELL);
+    const gy = Math.floor(ty / CELL);
     let cx = Math.floor((me.x + TANK_SIZE / 2) / CELL) + v.x;
     let cy = Math.floor((me.y + TANK_SIZE / 2) / CELL) + v.y;
     while (cx >= 0 && cy >= 0 && cx < GRID && cy < GRID) {

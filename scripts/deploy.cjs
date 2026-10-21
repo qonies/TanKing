@@ -1,4 +1,4 @@
-/** M5 部署脚本：构建（如缺失）+ 打印局域网访问地址与防火墙提示。运行：npm run deploy */
+/** M5 部署脚本：构建（总是重新构建，防止陈旧 dist）+ 打印局域网访问地址与防火墙提示。运行：npm run deploy */
 const { execSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -8,9 +8,12 @@ const root = path.resolve(__dirname, '..');
 const dist = path.join(root, 'dist');
 const PORT = process.env.PORT || 3000;
 
+// 总是重新构建：避免陈旧 dist 被托管（build 含 tsc 检查 + vite 构建 + 构建戳记）
+console.log('正在构建（npm run build）…');
+execSync('npm run build', { cwd: root, stdio: 'inherit' });
 if (!fs.existsSync(path.join(dist, 'index.html'))) {
-  console.log('dist/ 缺失，先执行构建…');
-  execSync('npm run build', { cwd: root, stdio: 'inherit' });
+  console.error('构建后仍缺少 dist/index.html，请检查构建日志');
+  process.exit(1);
 }
 
 const nets = os.networkInterfaces();
